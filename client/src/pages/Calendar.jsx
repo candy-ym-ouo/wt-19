@@ -1,24 +1,26 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { screenings as screeningsApi, films as filmsApi } from '../api.js';
+import { screenings as screeningsApi, films as filmsApi, venues as venuesApi } from '../api.js';
 
 export default function Calendar() {
   const [data, setData] = useState([]);
   const [allFilms, setAllFilms] = useState([]);
+  const [venueList, setVenueList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({
-    film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
+    film_id: '', venue_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
     ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
   });
 
   const fetchData = () => {
     setLoading(true);
-    Promise.all([screeningsApi.list(), filmsApi.list()]).then(([s, f]) => {
+    Promise.all([screeningsApi.list(), filmsApi.list(), venuesApi.list({ active_only: 1 })]).then(([s, f, v]) => {
       setData(s);
       setAllFilms(f);
+      setVenueList(v);
       setLoading(false);
     });
   };
@@ -59,11 +61,12 @@ export default function Calendar() {
     try {
       await screeningsApi.create({
         ...addForm,
+        venue_id: addForm.venue_id || null,
         is_changed: addForm.is_changed ? 1 : 0
       });
       setShowAdd(false);
       setAddForm({
-        film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
+        film_id: '', venue_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
         ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
       });
       fetchData();
@@ -158,13 +161,16 @@ export default function Calendar() {
             </div>
             <div>
               <label className="text-xs text-film-cream/60 mb-1.5 block">影院/场馆</label>
-              <input
-                type="text"
-                value={addForm.venue}
-                onChange={(e) => setAddForm({ ...addForm, venue: e.target.value })}
-                placeholder="如 中国电影资料馆"
+              <select
+                value={addForm.venue_id}
+                onChange={(e) => setAddForm({ ...addForm, venue_id: e.target.value })}
                 className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
-              />
+              >
+                <option value="">请选择场馆</option>
+                {venueList.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}{v.location ? ` · ${v.location}` : ''}</option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="text-xs text-film-cream/60 mb-1.5 block">地点</label>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi } from '../api.js';
+import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi, venues as venuesApi } from '../api.js';
 
 const emptyFilm = {
   title: '', original_title: '', director: '', year: '', country: '',
@@ -8,8 +8,12 @@ const emptyFilm = {
 };
 
 const emptyScreening = {
-  film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
+  film_id: '', venue_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
   ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
+};
+
+const emptyVenue = {
+  name: '', location: '', capacity: '', notes: '', is_active: 1
 };
 
 const emptyCollection = {
@@ -23,6 +27,7 @@ export default function Admin() {
   const [stats, setStats] = useState(null);
   const [filmList, setFilmList] = useState([]);
   const [screeningList, setScreeningList] = useState([]);
+  const [venueList, setVenueList] = useState([]);
   const [reviewList, setReviewList] = useState([]);
   const [notificationList, setNotificationList] = useState([]);
   const [favoriteList, setFavoriteList] = useState([]);
@@ -30,28 +35,33 @@ export default function Admin() {
   const [collectionList, setCollectionList] = useState([]);
   const [activeCollection, setActiveCollection] = useState(null);
   const [reportFilter, setReportFilter] = useState('all');
+  const [screeningVenueFilter, setScreeningVenueFilter] = useState('');
   const [loading, setLoading] = useState(true);
   const [showFilmForm, setShowFilmForm] = useState(false);
   const [showScreeningForm, setShowScreeningForm] = useState(false);
+  const [showVenueForm, setShowVenueForm] = useState(false);
   const [showCollectionForm, setShowCollectionForm] = useState(false);
   const [showAddFilmToCollection, setShowAddFilmToCollection] = useState(null);
   const [editingFilm, setEditingFilm] = useState(null);
   const [editingScreening, setEditingScreening] = useState(null);
+  const [editingVenue, setEditingVenue] = useState(null);
   const [editingCollection, setEditingCollection] = useState(null);
   const [filmForm, setFilmForm] = useState(emptyFilm);
   const [screeningForm, setScreeningForm] = useState(emptyScreening);
+  const [venueForm, setVenueForm] = useState(emptyVenue);
   const [collectionForm, setCollectionForm] = useState(emptyCollection);
   const [addFilmForm, setAddFilmForm] = useState({ film_id: '', sort_order: 0, note: '' });
 
   const fetchAll = async () => {
     setLoading(true);
-    const [s, f, sc, r, n, fav, rp, cols] = await Promise.all([
-      statsApi.get(), filmsApi.list(), screeningsApi.list(), reviewsApi.list({ include_hidden: 1 }),
+    const [s, f, sc, v, r, n, fav, rp, cols] = await Promise.all([
+      statsApi.get(), filmsApi.list(), screeningsApi.list(), venuesApi.list(), reviewsApi.list({ include_hidden: 1 }),
       notifApi.list(), favApi.list(), reportsApi.list(), collectionsApi.list()
     ]);
     setStats(s);
     setFilmList(f);
     setScreeningList(sc);
+    setVenueList(v);
     setReviewList(r);
     setNotificationList(n);
     setFavoriteList(fav);
@@ -86,10 +96,17 @@ export default function Admin() {
     setShowFilmForm(true);
   };
 
+  const openNewScreening = () => {
+    setEditingScreening(null);
+    setScreeningForm(emptyScreening);
+    setShowScreeningForm(true);
+  };
+
   const openEditScreening = (s) => {
     setEditingScreening(s);
     setScreeningForm({
       film_id: s.film_id,
+      venue_id: s.venue_id || '',
       screening_date: s.screening_date,
       screening_time: s.screening_time,
       venue: s.venue || '',
@@ -101,6 +118,71 @@ export default function Admin() {
       change_description: s.change_description || ''
     });
     setShowScreeningForm(true);
+  };
+
+  const openNewVenue = () => {
+    setEditingVenue(null);
+    setVenueForm(emptyVenue);
+    setShowVenueForm(true);
+  };
+
+  const openEditVenue = (v) => {
+    setEditingVenue(v);
+    setVenueForm({
+      name: v.name || '',
+      location: v.location || '',
+      capacity: v.capacity || '',
+      notes: v.notes || '',
+      is_active: v.is_active !== undefined ? v.is_active : 1
+    });
+    setShowVenueForm(true);
+  };
+
+  const handleVenueSubmit = async (e) => {
+    e.preventDefault();
+    if (!venueForm.name.trim()) {
+      alert('请填写场馆名称');
+      return;
+    }
+    try {
+      const data = {
+        ...venueForm,
+        capacity: venueForm.capacity ? parseInt(venueForm.capacity) : null,
+        is_active: venueForm.is_active ? 1 : 0
+      };
+      if (editingVenue) {
+        await venuesApi.update(editingVenue.id, data);
+      } else {
+        await venuesApi.create(data);
+      }
+      setShowVenueForm(false);
+      setEditingVenue(null);
+      setVenueForm(emptyVenue);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteVenue = async (id) => {
+    if (!confirm('确定删除此场馆？')) return;
+    try {
+      await venuesApi.delete(id);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleToggleVenueActive = async (v) => {
+    const action = v.is_active ? '停用' : '启用';
+    if (!confirm(`确定${action}此场馆？`)) return;
+    try {
+      await venuesApi.update(v.id, { is_active: v.is_active ? 0 : 1 });
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
   };
 
   const handleFilmSubmit = async (e) => {
@@ -139,6 +221,7 @@ export default function Admin() {
     try {
       const data = {
         ...screeningForm,
+        venue_id: screeningForm.venue_id || null,
         is_changed: screeningForm.is_changed ? 1 : 0
       };
       if (editingScreening) {
@@ -351,6 +434,7 @@ export default function Admin() {
     { key: 'overview', label: '总览', icon: '📊' },
     { key: 'collections', label: '专题策展', icon: '📚' },
     { key: 'films', label: '影片管理', icon: '🎬' },
+    { key: 'venues', label: '场馆管理', icon: '🏛' },
     { key: 'screenings', label: '放映场次', icon: '📅' },
     { key: 'reviews', label: '短评管理', icon: '✍️' },
     { key: 'reports', label: '举报审核', icon: '🚨' },
@@ -390,12 +474,12 @@ export default function Admin() {
             {[
               { label: '影片总数', value: stats.filmCount, icon: '🎬', color: 'from-film-gold/20 to-film-gold/5' },
               { label: '专题总数', value: stats.collectionCount || 0, icon: '📚', color: 'from-indigo-500/20 to-indigo-500/5' },
+              { label: '场馆总数', value: stats.venueCount || 0, icon: '🏛', color: 'from-cyan-500/20 to-cyan-500/5' },
               { label: '放映场次', value: stats.screeningCount, icon: '📅', color: 'from-blue-500/20 to-blue-500/5' },
               { label: '短评数量', value: stats.reviewCount, icon: '✍️', color: 'from-pink-500/20 to-pink-500/5' },
               { label: '收藏数量', value: stats.favoriteCount, icon: '❤️', color: 'from-red-500/20 to-red-500/5' },
-              { label: '待审举报', value: stats.pendingReportCount, icon: '🚨', color: 'from-red-500/20 to-red-500/5' },
-              { label: '未读通知', value: stats.unreadNotificationCount, icon: '🔔', color: 'from-orange-500/20 to-orange-500/5' },
-              { label: '通知总数', value: notificationList.length, icon: '📬', color: 'from-purple-500/20 to-purple-500/5' },
+              { label: '待审举报', value: stats.pendingReportCount, icon: '�', color: 'from-red-500/20 to-red-500/5' },
+              { label: '未读通知', value: stats.unreadNotificationCount, icon: '�', color: 'from-orange-500/20 to-orange-500/5' },
             ].map(item => (
               <div key={item.label} className={`p-5 rounded-xl bg-gradient-to-br ${item.color} border border-film-gray/50`}>
                 <div className="text-3xl mb-2">{item.icon}</div>
@@ -745,11 +829,105 @@ export default function Admin() {
         </div>
       )}
 
+      {activeTab === 'venues' && (
+        <div>
+          <div className="flex justify-between items-center mb-6">
+            <p className="text-film-cream/60">共 {venueList.length} 个场馆</p>
+            <button
+              onClick={openNewVenue}
+              className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+            >
+              + 新增场馆
+            </button>
+          </div>
+
+          {venueList.length === 0 ? (
+            <div className="py-16 text-center border border-dashed border-film-gray rounded-xl">
+              <p className="text-film-cream/50">暂无场馆，点击上方按钮创建</p>
+            </div>
+          ) : (
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {venueList.map(v => (
+                <div key={v.id} className={`group rounded-xl border p-5 transition-colors ${
+                  v.is_active
+                    ? 'bg-film-dark/50 border-film-gray/50 hover:border-film-gold/30'
+                    : 'bg-film-black/30 border-film-gray/20 opacity-70 hover:border-film-cream/30'
+                }`}>
+                  <div className="flex items-start justify-between gap-3 mb-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-1 flex-wrap">
+                        {!v.is_active && <span className="text-xs px-2 py-0.5 rounded-full bg-film-cream/10 text-film-cream/70 border border-film-cream/20">已停用</span>}
+                        {v.is_active && <span className="text-xs text-green-400">● 启用中</span>}
+                      </div>
+                      <h3 className={`font-semibold truncate ${v.is_active ? 'text-film-cream' : 'text-film-cream/60'}`}>🏛 {v.name}</h3>
+                      {v.location && <p className="text-xs text-film-cream/50 mt-1">📍 {v.location}</p>}
+                    </div>
+                  </div>
+                  <div className="text-xs text-film-cream/50 mb-4 space-y-1">
+                    {v.capacity && <div>👥 容量：{v.capacity} 座</div>}
+                    {v.notes && <div className="truncate">📝 {v.notes}</div>}
+                    <div>📅 关联场次：{screeningList.filter(s => s.venue_id === v.id).length} 场</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleToggleVenueActive(v)}
+                      className={`flex-1 text-sm px-3 py-1.5 rounded-lg transition-colors ${
+                        v.is_active
+                          ? 'text-film-orange hover:bg-film-orange/10'
+                          : 'text-green-400 hover:bg-green-400/10'
+                      }`}
+                      title={v.is_active ? '停用' : '启用'}
+                    >
+                      {v.is_active ? '停用' : '启用'}
+                    </button>
+                    <button
+                      onClick={() => openEditVenue(v)}
+                      className="text-sm px-3 py-1.5 text-film-cream/60 hover:text-film-gold rounded-lg hover:bg-film-gray/50 transition-colors"
+                    >
+                      编辑
+                    </button>
+                    <button
+                      onClick={() => handleDeleteVenue(v.id)}
+                      className="text-sm px-3 py-1.5 text-film-cream/60 hover:text-film-red rounded-lg hover:bg-film-red/10 transition-colors"
+                    >
+                      删除
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {activeTab === 'screenings' && (
         <div>
-          <p className="text-film-cream/60 mb-6">共 {screeningList.length} 场放映</p>
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <div className="flex flex-wrap items-center gap-3">
+              <p className="text-film-cream/60">共 {screeningList.length} 场放映</p>
+              <select
+                value={screeningVenueFilter}
+                onChange={(e) => setScreeningVenueFilter(e.target.value)}
+                className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+              >
+                <option value="">全部场馆</option>
+                {venueList.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}{v.location ? ` · ${v.location}` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <button
+              onClick={openNewScreening}
+              className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+            >
+              + 新增放映
+            </button>
+          </div>
           <div className="space-y-2">
-            {screeningList.map(s => (
+            {(screeningVenueFilter
+              ? screeningList.filter(s => String(s.venue_id) === String(screeningVenueFilter))
+              : screeningList
+            ).map(s => (
               <div key={s.id} className="group flex flex-wrap items-center gap-4 p-4 bg-film-dark/50 rounded-xl border border-film-gray/50">
                 <div className="text-center min-w-[70px]">
                   <div className="text-2xl font-serif font-bold text-film-gold">{new Date(s.screening_date).getDate()}</div>
@@ -1131,13 +1309,16 @@ export default function Admin() {
                 </div>
                 <div>
                   <label className="text-xs text-film-cream/60 mb-1.5 block">影院/场馆</label>
-                  <input
-                    type="text"
-                    value={screeningForm.venue}
-                    onChange={(e) => setScreeningForm({ ...screeningForm, venue: e.target.value })}
-                    placeholder="如 中国电影资料馆"
+                  <select
+                    value={screeningForm.venue_id}
+                    onChange={(e) => setScreeningForm({ ...screeningForm, venue_id: e.target.value })}
                     className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
-                  />
+                  >
+                    <option value="">请选择场馆</option>
+                    {venueList.filter(v => v.is_active).map(v => (
+                      <option key={v.id} value={v.id}>{v.name}{v.location ? ` · ${v.location}` : ''}</option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs text-film-cream/60 mb-1.5 block">地点</label>
@@ -1204,6 +1385,95 @@ export default function Admin() {
                   className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
                 >
                   {editingScreening ? '保存修改' : '添加场次'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showVenueForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowVenueForm(false)}>
+          <div className="bg-film-dark w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-film-gray" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-film-dark border-b border-film-gray/50 p-5 flex items-center justify-between">
+              <h2 className="text-xl font-serif font-bold">{editingVenue ? '编辑场馆' : '新增场馆'}</h2>
+              <button
+                onClick={() => setShowVenueForm(false)}
+                className="p-2 rounded-lg hover:bg-film-gray transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleVenueSubmit} className="p-5 space-y-4">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">场馆名称 *</label>
+                  <input
+                    type="text"
+                    value={venueForm.name}
+                    onChange={(e) => setVenueForm({ ...venueForm, name: e.target.value })}
+                    placeholder="如 中国电影资料馆"
+                    required
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">地址</label>
+                  <input
+                    type="text"
+                    value={venueForm.location}
+                    onChange={(e) => setVenueForm({ ...venueForm, location: e.target.value })}
+                    placeholder="如 北京·小西天"
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">座位容量</label>
+                  <input
+                    type="number"
+                    value={venueForm.capacity}
+                    onChange={(e) => setVenueForm({ ...venueForm, capacity: e.target.value })}
+                    placeholder="如 300"
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!venueForm.is_active}
+                      onChange={(e) => setVenueForm({ ...venueForm, is_active: e.target.checked ? 1 : 0 })}
+                      className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
+                    />
+                    <span className="text-sm text-film-cream/80">启用中</span>
+                  </label>
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">备注</label>
+                  <textarea
+                    value={venueForm.notes}
+                    onChange={(e) => setVenueForm({ ...venueForm, notes: e.target.value })}
+                    rows={3}
+                    placeholder="如 艺术影院、IMAX 厅等"
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-4 border-t border-film-gray/50">
+                <button
+                  type="button"
+                  onClick={() => setShowVenueForm(false)}
+                  className="px-5 py-2.5 rounded-lg text-film-cream/60 hover:text-film-cream transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
+                >
+                  {editingVenue ? '保存修改' : '添加场馆'}
                 </button>
               </div>
             </form>

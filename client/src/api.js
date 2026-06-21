@@ -64,6 +64,17 @@ export const screenings = {
   delete: (id) => request(`/screenings/${id}`, { method: 'DELETE' }),
 };
 
+export const venues = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/venues${qs ? '?' + qs : ''}`);
+  },
+  get: (id) => request(`/venues/${id}`),
+  create: (data) => request('/venues', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => request(`/venues/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id) => request(`/venues/${id}`, { method: 'DELETE' }),
+};
+
 export const reviews = {
   list: (params = {}) => {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();

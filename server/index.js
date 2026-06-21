@@ -134,12 +134,109 @@ app.delete('/api/films/:id', (req, res) => {
 
 // ============ 放映日历 API ============
 
+// ============ 场馆 API ============
+
+app.get('/api/venues', (req, res) => {
+  const { active_only } = req.query;
+  let sql = 'SELECT * FROM venues WHERE 1=1';
+  const params = [];
+  if (active_only) {
+    sql += ' AND is_active = 1';
+  }
+  sql += ' ORDER BY name ASC';
+  const venues = db.prepare(sql).all(...params);
+  res.json(venues);
+});
+
+app.get('/api/venues/:id', (req, res) => {
+  const venue = db.prepare('SELECT * FROM venues WHERE id = ?').get(req.params.id);
+  if (!venue) {
+    return res.status(404).json({ error: '场馆不存在' });
+  }
+  const screenings = db.prepare(`
+    SELECT s.*, f.title, f.poster
+    FROM screenings s LEFT JOIN films f ON s.film_id = f.id
+    WHERE s.venue_id = ?
+    ORDER BY s.screening_date, s.screening_time
+  `).all(req.params.id);
+  res.json({ ...venue, screenings });
+});
+
+app.post('/api/venues', (req, res) => {
+  const { name, location, capacity, notes, is_active = 1 } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: '场馆名称不能为空' });
+  }
+  try {
+    const info = db.prepare(`
+      INSERT INTO venues (name, location, capacity, notes, is_active)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(
+      name.trim(),
+      location || null,
+      capacity ? parseInt(capacity) : null,
+      notes || null,
+      is_active ? 1 : 0
+    );
+    const venue = db.prepare('SELECT * FROM venues WHERE id = ?').get(info.lastInsertRowid);
+    res.status(201).json(venue);
+  } catch (err) {
+    if (err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: '该场馆（同名同地址）已存在' });
+    }
+    throw err;
+  }
+});
+
+app.put('/api/venues/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM venues WHERE id = ?').get(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: '场馆不存在' });
+  }
+  const { name, location, capacity, notes, is_active } = req.body;
+  try {
+    db.prepare(`
+      UPDATE venues SET
+        name = ?, location = ?, capacity = ?, notes = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `).run(
+      name !== undefined ? name.trim() : existing.name,
+      location !== undefined ? location : existing.location,
+      capacity !== undefined ? (capacity ? parseInt(capacity) : null) : existing.capacity,
+      notes !== undefined ? notes : existing.notes,
+      is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+      req.params.id
+    );
+    const venue = db.prepare('SELECT * FROM venues WHERE id = ?').get(req.params.id);
+    res.json(venue);
+  } catch (err) {
+    if (err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: '该场馆（同名同地址）已存在' });
+    }
+    throw err;
+  }
+});
+
+app.delete('/api/venues/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM venues WHERE id = ?').get(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: '场馆不存在' });
+  }
+  const screeningCount = db.prepare('SELECT COUNT(*) as count FROM screenings WHERE venue_id = ?').get(req.params.id).count;
+  if (screeningCount > 0) {
+    return res.status(400).json({ error: `该场馆下还有 ${screeningCount} 场放映，请先处理放映场次` });
+  }
+  db.prepare('DELETE FROM venues WHERE id = ?').run(req.params.id);
+  res.json({ message: '删除成功' });
+});
+
 app.get('/api/screenings', (req, res) => {
-  const { date_from, date_to } = req.query;
+  const { date_from, date_to, venue_id } = req.query;
   let sql = `
-    SELECT s.*, f.title, f.director, f.year, f.poster, f.genre
+    SELECT s.*, f.title, f.director, f.year, f.poster, f.genre, v.name as venue_name, v.location as venue_location, v.capacity as venue_capacity
     FROM screenings s
     LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
     WHERE 1=1
   `;
   const params = [];
@@ -152,6 +249,10 @@ app.get('/api/screenings', (req, res) => {
     sql += ' AND s.screening_date <= ?';
     params.push(date_to);
   }
+  if (venue_id) {
+    sql += ' AND s.venue_id = ?';
+    params.push(venue_id);
+  }
 
   sql += ' ORDER BY s.screening_date, s.screening_time';
 
@@ -160,19 +261,49 @@ app.get('/api/screenings', (req, res) => {
 });
 
 app.post('/api/screenings', (req, res) => {
-  const { film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description } = req.body;
+  const { film_id, venue_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description } = req.body;
   if (!film_id || !screening_date || !screening_time) {
     return res.status(400).json({ error: '影片、日期和时间不能为空' });
   }
 
+  if (venue_id) {
+    const venueExists = db.prepare('SELECT id, name, location FROM venues WHERE id = ?').get(venue_id);
+    if (!venueExists) {
+      return res.status(400).json({ error: '所选场馆不存在' });
+    }
+    const conflictSql = `
+      SELECT s.*, f.title FROM screenings s
+      LEFT JOIN films f ON s.film_id = f.id
+      WHERE s.venue_id = ? AND s.screening_date = ? AND s.screening_time = ?
+    `;
+    const conflict = db.prepare(conflictSql).get(venue_id, screening_date, screening_time);
+    if (conflict) {
+      return res.status(409).json({
+        error: `时间冲突：该场馆在 ${screening_date} ${screening_time} 已有「${conflict.title}」排期`,
+        conflict: conflict
+      });
+    }
+  }
+
+  let finalVenue = venue;
+  let finalLocation = location;
+  if (venue_id) {
+    const v = db.prepare('SELECT name, location FROM venues WHERE id = ?').get(venue_id);
+    if (v) {
+      finalVenue = v.name;
+      finalLocation = v.location || location;
+    }
+  }
+
   const info = db.prepare(`
-    INSERT INTO screenings (film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(film_id, screening_date, screening_time, venue || null, location || null, notes || null, ticket_status || 'not_open', ticket_open_date || null, is_changed || 0, change_description || null);
+    INSERT INTO screenings (film_id, venue_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(film_id, venue_id || null, screening_date, screening_time, finalVenue || null, finalLocation || null, notes || null, ticket_status || 'not_open', ticket_open_date || null, is_changed || 0, change_description || null);
 
   const screening = db.prepare(`
-    SELECT s.*, f.title, f.director, f.year, f.poster
+    SELECT s.*, f.title, f.director, f.year, f.poster, v.name as venue_name, v.location as venue_location
     FROM screenings s LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
     WHERE s.id = ?
   `).get(info.lastInsertRowid);
 
@@ -200,22 +331,57 @@ app.put('/api/screenings/:id', (req, res) => {
     return res.status(404).json({ error: '放映信息不存在' });
   }
 
-  const { film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description } = req.body;
+  const { film_id, venue_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description } = req.body;
   const oldStatus = existing.ticket_status;
   const newStatus = ticket_status || existing.ticket_status;
 
+  const finalFilmId = film_id || existing.film_id;
+  const finalVenueId = venue_id !== undefined ? (venue_id || null) : existing.venue_id;
+  const finalDate = screening_date || existing.screening_date;
+  const finalTime = screening_time || existing.screening_time;
+
+  if (finalVenueId) {
+    const venueExists = db.prepare('SELECT id, name, location FROM venues WHERE id = ?').get(finalVenueId);
+    if (!venueExists) {
+      return res.status(400).json({ error: '所选场馆不存在' });
+    }
+    const conflictSql = `
+      SELECT s.*, f.title FROM screenings s
+      LEFT JOIN films f ON s.film_id = f.id
+      WHERE s.venue_id = ? AND s.screening_date = ? AND s.screening_time = ? AND s.id != ?
+    `;
+    const conflict = db.prepare(conflictSql).get(finalVenueId, finalDate, finalTime, req.params.id);
+    if (conflict) {
+      return res.status(409).json({
+        error: `时间冲突：该场馆在 ${finalDate} ${finalTime} 已有「${conflict.title}」排期`,
+        conflict: conflict
+      });
+    }
+  }
+
+  let finalVenue = venue;
+  let finalLocation = location;
+  if (finalVenueId) {
+    const v = db.prepare('SELECT name, location FROM venues WHERE id = ?').get(finalVenueId);
+    if (v) {
+      finalVenue = v.name;
+      finalLocation = v.location || location;
+    }
+  }
+
   db.prepare(`
     UPDATE screenings SET 
-      film_id = ?, screening_date = ?, screening_time = ?, venue = ?, location = ?, notes = ?,
+      film_id = ?, venue_id = ?, screening_date = ?, screening_time = ?, venue = ?, location = ?, notes = ?,
       ticket_status = ?, ticket_open_date = ?, is_changed = ?, change_description = ?,
       updated_at = CURRENT_TIMESTAMP
     WHERE id = ?
   `).run(
-    film_id || existing.film_id,
-    screening_date || existing.screening_date,
-    screening_time || existing.screening_time,
-    venue !== undefined ? venue : existing.venue,
-    location !== undefined ? location : existing.location,
+    finalFilmId,
+    finalVenueId,
+    finalDate,
+    finalTime,
+    finalVenue !== undefined ? finalVenue : existing.venue,
+    finalLocation !== undefined ? finalLocation : existing.location,
     notes !== undefined ? notes : existing.notes,
     ticket_status || existing.ticket_status,
     ticket_open_date !== undefined ? ticket_open_date : existing.ticket_open_date,
@@ -224,26 +390,27 @@ app.put('/api/screenings/:id', (req, res) => {
     req.params.id
   );
 
-  const film = db.prepare('SELECT title FROM films WHERE id = ?').get(film_id || existing.film_id);
+  const film = db.prepare('SELECT title FROM films WHERE id = ?').get(finalFilmId);
 
   if (oldStatus !== 'on_sale' && newStatus === 'on_sale') {
-    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND ticket_reminder_enabled = 1').all(film_id || existing.film_id);
+    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND ticket_reminder_enabled = 1').all(finalFilmId);
     const insertNotif = db.prepare('INSERT INTO notifications (film_id, screening_id, type, title, content) VALUES (?, ?, ?, ?, ?)');
     favsWithReminder.forEach(f => {
-      insertNotif.run(film_id || existing.film_id, req.params.id, 'ticket_on_sale', `《${film?.title || '影片'}》已开票`, `${screening_date || existing.screening_date} ${screening_time || existing.screening_time} 场次现已开放购票`);
+      insertNotif.run(finalFilmId, req.params.id, 'ticket_on_sale', `《${film?.title || '影片'}》已开票`, `${finalDate} ${finalTime} 场次现已开放购票`);
     });
   }
   if (is_changed) {
-    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND schedule_change_reminder_enabled = 1').all(film_id || existing.film_id);
+    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND schedule_change_reminder_enabled = 1').all(finalFilmId);
     const insertNotif = db.prepare('INSERT INTO notifications (film_id, screening_id, type, title, content) VALUES (?, ?, ?, ?, ?)');
     favsWithReminder.forEach(f => {
-      insertNotif.run(film_id || existing.film_id, req.params.id, 'schedule_change', `《${film?.title || '影片'}》放映变更`, change_description || '放映信息有变更，请留意');
+      insertNotif.run(finalFilmId, req.params.id, 'schedule_change', `《${film?.title || '影片'}》放映变更`, change_description || '放映信息有变更，请留意');
     });
   }
 
   const screening = db.prepare(`
-    SELECT s.*, f.title, f.director, f.year, f.poster
+    SELECT s.*, f.title, f.director, f.year, f.poster, v.name as venue_name, v.location as venue_location
     FROM screenings s LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
     WHERE s.id = ?
   `).get(req.params.id);
   res.json(screening);
@@ -754,6 +921,7 @@ app.get('/api/collections/aggregate/themes', (req, res) => {
 app.get('/api/stats', (req, res) => {
   const filmCount = db.prepare('SELECT COUNT(*) as count FROM films').get().count;
   const screeningCount = db.prepare('SELECT COUNT(*) as count FROM screenings').get().count;
+  const venueCount = db.prepare('SELECT COUNT(*) as count FROM venues').get().count;
   const reviewCount = db.prepare('SELECT COUNT(*) as count FROM reviews').get().count;
   const favoriteCount = db.prepare('SELECT COUNT(*) as count FROM favorites').get().count;
   const unreadNotificationCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE is_read = 0').get().count;
@@ -796,6 +964,7 @@ app.get('/api/stats', (req, res) => {
   res.json({
     filmCount,
     screeningCount,
+    venueCount,
     reviewCount,
     favoriteCount,
     unreadNotificationCount,

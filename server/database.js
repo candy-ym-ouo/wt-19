@@ -24,9 +24,22 @@ db.exec(`
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS venues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    location TEXT,
+    capacity INTEGER,
+    notes TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(name, location)
+  );
+
   CREATE TABLE IF NOT EXISTS screenings (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     film_id INTEGER NOT NULL,
+    venue_id INTEGER,
     screening_date TEXT NOT NULL,
     screening_time TEXT NOT NULL,
     venue TEXT,
@@ -38,7 +51,8 @@ db.exec(`
     change_description TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE
+    FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
+    FOREIGN KEY (venue_id) REFERENCES venues(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS reviews (
@@ -133,6 +147,40 @@ if (!colNames.includes('ticket_status')) {
     ALTER TABLE screenings ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;
   `);
 }
+if (!colNames.includes('venue_id')) {
+  db.exec(`
+    ALTER TABLE screenings ADD COLUMN venue_id INTEGER REFERENCES venues(id) ON DELETE SET NULL;
+  `);
+}
+
+const venueColumns = db.prepare("PRAGMA table_info(venues)").all();
+if (venueColumns.length === 0) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS venues (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      location TEXT,
+      capacity INTEGER,
+      notes TEXT,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(name, location)
+    );
+  `);
+  const existingVenues = db.prepare("SELECT DISTINCT venue, location FROM screenings WHERE venue IS NOT NULL AND venue != ''").all();
+  const insertVenue = db.prepare("INSERT OR IGNORE INTO venues (name, location) VALUES (?, ?)");
+  existingVenues.forEach(v => {
+    if (v.venue) insertVenue.run(v.venue, v.location || null);
+  });
+  const updateScreeningVenue = db.prepare(`
+    UPDATE screenings SET venue_id = (
+      SELECT id FROM venues WHERE name = screenings.venue AND (location = screenings.location OR (location IS NULL AND screenings.location IS NULL))
+      LIMIT 1
+    ) WHERE venue IS NOT NULL AND venue != ''
+  `);
+  updateScreeningVenue.run();
+}
 const favColumns = db.prepare("PRAGMA table_info(favorites)").all();
 const favColNames = favColumns.map(c => c.name);
 if (!favColNames.includes('ticket_reminder_enabled')) {
@@ -176,8 +224,13 @@ if (filmCount === 0) {
   `);
 
   const insertScreening = db.prepare(`
-    INSERT INTO screenings (film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO screenings (film_id, venue_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const insertVenue = db.prepare(`
+    INSERT INTO venues (name, location, capacity, notes)
+    VALUES (?, ?, ?, ?)
   `);
 
   const insertReview = db.prepare(`
@@ -275,18 +328,32 @@ if (filmCount === 0) {
     return info.lastInsertRowid;
   });
 
+  const venues = [
+    { name: '中国电影资料馆', location: '北京·小西天', capacity: 500, notes: '艺术影院' },
+    { name: '百老汇电影中心', location: '北京·东直门', capacity: 300, notes: '' },
+    { name: '上海电影博物馆', location: '上海·徐汇', capacity: 400, notes: '' },
+    { name: 'UCCA尤伦斯当代艺术中心', location: '北京·798', capacity: 200, notes: '艺术空间放映' },
+    { name: '苏州艺术影院', location: '苏州·工业园区', capacity: 250, notes: '' }
+  ];
+
+  const venueMap = {};
+  venues.forEach(v => {
+    const info = insertVenue.run(v.name, v.location, v.capacity, v.notes);
+    venueMap[v.name] = info.lastInsertRowid;
+  });
+
   const screenings = [
-    { filmIndex: 0, date: '2026-06-25', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '4K修复版', ticket_status: 'on_sale', ticket_open_date: '2026-06-20', is_changed: 0, change_description: '' },
-    { filmIndex: 1, date: '2026-06-26', time: '20:00', venue: '百老汇电影中心', location: '北京·东直门', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-06-23', is_changed: 0, change_description: '' },
-    { filmIndex: 2, date: '2026-06-28', time: '14:00', venue: '上海电影博物馆', location: '上海·徐汇', notes: '特吕弗回顾展', ticket_status: 'on_sale', ticket_open_date: '2026-06-18', is_changed: 1, change_description: '时间由15:00调整为14:00' },
-    { filmIndex: 3, date: '2026-06-30', time: '18:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '小津安二郎专题', ticket_status: 'sold_out', ticket_open_date: '2026-06-15', is_changed: 0, change_description: '' },
-    { filmIndex: 4, date: '2026-07-02', time: '19:00', venue: 'UCCA尤伦斯当代艺术中心', location: '北京·798', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-06-28', is_changed: 0, change_description: '' },
-    { filmIndex: 0, date: '2026-07-05', time: '15:30', venue: '苏州艺术影院', location: '苏州·工业园区', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-07-01', is_changed: 0, change_description: '' },
-    { filmIndex: 5, date: '2026-07-08', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '塔可夫斯基纪念展', ticket_status: 'on_sale', ticket_open_date: '2026-06-22', is_changed: 0, change_description: '' }
+    { filmIndex: 0, venueName: '中国电影资料馆', date: '2026-06-25', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '4K修复版', ticket_status: 'on_sale', ticket_open_date: '2026-06-20', is_changed: 0, change_description: '' },
+    { filmIndex: 1, venueName: '百老汇电影中心', date: '2026-06-26', time: '20:00', venue: '百老汇电影中心', location: '北京·东直门', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-06-23', is_changed: 0, change_description: '' },
+    { filmIndex: 2, venueName: '上海电影博物馆', date: '2026-06-28', time: '14:00', venue: '上海电影博物馆', location: '上海·徐汇', notes: '特吕弗回顾展', ticket_status: 'on_sale', ticket_open_date: '2026-06-18', is_changed: 1, change_description: '时间由15:00调整为14:00' },
+    { filmIndex: 3, venueName: '中国电影资料馆', date: '2026-06-30', time: '18:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '小津安二郎专题', ticket_status: 'sold_out', ticket_open_date: '2026-06-15', is_changed: 0, change_description: '' },
+    { filmIndex: 4, venueName: 'UCCA尤伦斯当代艺术中心', date: '2026-07-02', time: '19:00', venue: 'UCCA尤伦斯当代艺术中心', location: '北京·798', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-06-28', is_changed: 0, change_description: '' },
+    { filmIndex: 0, venueName: '苏州艺术影院', date: '2026-07-05', time: '15:30', venue: '苏州艺术影院', location: '苏州·工业园区', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-07-01', is_changed: 0, change_description: '' },
+    { filmIndex: 5, venueName: '中国电影资料馆', date: '2026-07-08', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '塔可夫斯基纪念展', ticket_status: 'on_sale', ticket_open_date: '2026-06-22', is_changed: 0, change_description: '' }
   ];
 
   screenings.forEach(s => {
-    insertScreening.run(filmIds[s.filmIndex], s.date, s.time, s.venue, s.location, s.notes, s.ticket_status, s.ticket_open_date, s.is_changed, s.change_description);
+    insertScreening.run(filmIds[s.filmIndex], venueMap[s.venueName] || null, s.date, s.time, s.venue, s.location, s.notes, s.ticket_status, s.ticket_open_date, s.is_changed, s.change_description);
   });
 
   const reviews = [
