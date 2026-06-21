@@ -19,6 +19,8 @@ const sortOptions = [
 
 const reportReasons = ['剧透', '人身攻击', '垃圾广告', '违规内容', '其他'];
 
+const moodOptions = ['感动', '愉悦', '沉思', '震撼', '忧郁', '温暖'];
+
 export default function Reviews() {
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -33,16 +35,31 @@ export default function Reviews() {
   });
   const [showReportModal, setShowReportModal] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
+  const [search, setSearch] = useState('');
+  const [filterMood, setFilterMood] = useState('');
+  const [filterRatingMin, setFilterRatingMin] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
 
   const fetchData = () => {
     setLoading(true);
-    reviewsApi.list({ sort }).then(data => {
+    reviewsApi.list({
+      sort,
+      search,
+      mood: filterMood,
+      rating_min: filterRatingMin,
+    }).then(data => {
       setList(data);
       setLoading(false);
     });
   };
 
-  useEffect(() => { fetchData(); }, [sort]);
+  useEffect(() => { fetchData(); }, [sort, search, filterMood, filterRatingMin]);
+
+  const resetFilters = () => {
+    setSearch('');
+    setFilterMood('');
+    setFilterRatingMin('');
+  };
 
   const toggleSpoiler = (reviewId) => {
     setShowSpoilers(prev => ({ ...prev, [reviewId]: !prev[reviewId] }));
@@ -113,22 +130,90 @@ export default function Reviews() {
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-10">
-      <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
-        <div>
-          <h1 className="text-3xl md:text-4xl font-serif font-bold">观后短评</h1>
-          <p className="text-film-cream/60 mt-2">共 {list.length} 条观影记录</p>
+      <div className="mb-8">
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div>
+            <h1 className="text-3xl md:text-4xl font-serif font-bold">观后短评</h1>
+            <p className="text-film-cream/60 mt-2">共 {list.length} 条观影记录</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-film-cream/50">排序：</span>
+            <select
+              value={sort}
+              onChange={(e) => setSort(e.target.value)}
+              className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+            >
+              {sortOptions.map(s => (
+                <option key={s.value} value={s.value}>{s.label}</option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-film-cream/50">排序：</span>
-          <select
-            value={sort}
-            onChange={(e) => setSort(e.target.value)}
-            className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
-          >
-            {sortOptions.map(s => (
-              <option key={s.value} value={s.value}>{s.label}</option>
-            ))}
-          </select>
+
+        <div className="space-y-4">
+          <div className="flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-film-cream/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索评论内容、作者、影片名、导演..."
+                className="w-full pl-12 pr-4 py-3 bg-film-dark border border-film-gray rounded-lg focus:border-film-gold focus:outline-none transition-colors placeholder:text-film-cream/40"
+              />
+            </div>
+            <button
+              onClick={() => setShowFilters(!showFilters)}
+              className={`px-5 py-3 rounded-lg border transition-colors ${
+                showFilters
+                  ? 'bg-film-gold/10 border-film-gold text-film-gold'
+                  : 'bg-film-dark border-film-gray text-film-cream/70 hover:border-film-gold/50'
+              }`}
+            >
+              高级筛选
+            </button>
+          </div>
+
+          {showFilters && (
+            <div className="p-6 bg-film-dark/80 rounded-xl border border-film-gray/50 grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">心情标签</label>
+                <select
+                  value={filterMood}
+                  onChange={(e) => setFilterMood(e.target.value)}
+                  className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none text-sm"
+                >
+                  <option value="">全部心情</option>
+                  {moodOptions.map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">最低评分</label>
+                <select
+                  value={filterRatingMin}
+                  onChange={(e) => setFilterRatingMin(e.target.value)}
+                  className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none text-sm"
+                >
+                  <option value="">不限</option>
+                  <option value="3">★★★ 以上</option>
+                  <option value="4">★★★★ 以上</option>
+                  <option value="5">★★★★★</option>
+                </select>
+              </div>
+              <div className="col-span-2 md:col-span-4 flex justify-end">
+                <button
+                  onClick={resetFilters}
+                  className="text-sm text-film-cream/60 hover:text-film-gold transition-colors"
+                >
+                  重置全部筛选
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

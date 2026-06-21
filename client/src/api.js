@@ -135,3 +135,10 @@ export const collections = {
   getCountries: () => request('/collections/aggregate/countries'),
   getThemes: () => request('/collections/aggregate/themes'),
 };
+
+export const search = {
+  all: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return request(`/search${qs ? '?' + qs : ''}`);
+  },
+};

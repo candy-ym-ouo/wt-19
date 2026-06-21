@@ -2,6 +2,13 @@ import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { screenings as screeningsApi, films as filmsApi, venues as venuesApi } from '../api.js';
 
+const ticketStatusOptions = [
+  { value: '', label: '全部状态' },
+  { value: 'not_open', label: '尚未开票' },
+  { value: 'on_sale', label: '正在售票' },
+  { value: 'sold_out', label: '已售罄' },
+];
+
 export default function Calendar() {
   const [data, setData] = useState([]);
   const [allFilms, setAllFilms] = useState([]);
@@ -10,15 +17,28 @@ export default function Calendar() {
   const [view, setView] = useState('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAdd, setShowAdd] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
   const [addConflictError, setAddConflictError] = useState(null);
   const [addForm, setAddForm] = useState({
     film_id: '', venue_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
     ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
   });
+  const [search, setSearch] = useState('');
+  const [filterVenue, setFilterVenue] = useState('');
+  const [filterStatus, setFilterStatus] = useState('');
+  const [filterDateFrom, setFilterDateFrom] = useState('');
+  const [filterDateTo, setFilterDateTo] = useState('');
 
   const fetchData = () => {
     setLoading(true);
-    Promise.all([screeningsApi.list(), filmsApi.list(), venuesApi.list({ active_only: 1 })]).then(([s, f, v]) => {
+    const screeningParams = {
+      search,
+      venue_id: filterVenue,
+      ticket_status: filterStatus,
+      date_from: filterDateFrom,
+      date_to: filterDateTo,
+    };
+    Promise.all([screeningsApi.list(screeningParams), filmsApi.list(), venuesApi.list({ active_only: 1 })]).then(([s, f, v]) => {
       setData(s);
       setAllFilms(f);
       setVenueList(v);
@@ -26,7 +46,15 @@ export default function Calendar() {
     });
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [search, filterVenue, filterStatus, filterDateFrom, filterDateTo]);
+
+  const resetFilters = () => {
+    setSearch('');
+    setFilterVenue('');
+    setFilterStatus('');
+    setFilterDateFrom('');
+    setFilterDateTo('');
+  };
 
   const calendarData = useMemo(() => {
     const year = currentDate.getFullYear();
@@ -129,6 +157,89 @@ export default function Calendar() {
             + 添加放映
           </button>
         </div>
+      </div>
+
+      <div className="mb-8 space-y-4">
+        <div className="flex flex-col md:flex-row gap-3">
+          <div className="relative flex-1">
+            <svg className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-film-cream/40" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="搜索影片名、导演、场馆、地点、备注..."
+              className="w-full pl-12 pr-4 py-3 bg-film-dark border border-film-gray rounded-lg focus:border-film-gold focus:outline-none transition-colors placeholder:text-film-cream/40"
+            />
+          </div>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className={`px-5 py-3 rounded-lg border transition-colors ${
+              showFilters
+                ? 'bg-film-gold/10 border-film-gold text-film-gold'
+                : 'bg-film-dark border-film-gray text-film-cream/70 hover:border-film-gold/50'
+            }`}
+          >
+            高级筛选
+          </button>
+        </div>
+
+        {showFilters && (
+          <div className="p-6 bg-film-dark/80 rounded-xl border border-film-gray/50 grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className="text-xs text-film-cream/60 mb-1.5 block">影院/场馆</label>
+              <select
+                value={filterVenue}
+                onChange={(e) => setFilterVenue(e.target.value)}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none text-sm"
+              >
+                <option value="">全部场馆</option>
+                {venueList.map(v => (
+                  <option key={v.id} value={v.id}>{v.name}{v.location ? ` · ${v.location}` : ''}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-film-cream/60 mb-1.5 block">开票状态</label>
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none text-sm"
+              >
+                {ticketStatusOptions.map(o => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-film-cream/60 mb-1.5 block">起始日期</label>
+              <input
+                type="date"
+                value={filterDateFrom}
+                onChange={(e) => setFilterDateFrom(e.target.value)}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-film-cream/60 mb-1.5 block">结束日期</label>
+              <input
+                type="date"
+                value={filterDateTo}
+                onChange={(e) => setFilterDateTo(e.target.value)}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none text-sm"
+              />
+            </div>
+            <div className="col-span-2 md:col-span-4 flex justify-end">
+              <button
+                onClick={resetFilters}
+                className="text-sm text-film-cream/60 hover:text-film-gold transition-colors"
+              >
+                重置全部筛选
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {showAdd && (

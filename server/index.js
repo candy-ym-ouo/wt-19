@@ -12,41 +12,49 @@ app.use(express.urlencoded({ extended: true }));
 // ============ 影片相关 API ============
 
 app.get('/api/films', (req, res) => {
-  const { search, genre, country, year_min, year_max, rating_min, sort } = req.query;
-  let sql = 'SELECT * FROM films WHERE 1=1';
+  const { search, genre, country, year_min, year_max, rating_min, sort, venue_id, has_screening } = req.query;
+  let sql = 'SELECT DISTINCT f.* FROM films f WHERE 1=1';
   const params = [];
 
   if (search) {
-    sql += ' AND (title LIKE ? OR original_title LIKE ? OR director LIKE ? OR synopsis LIKE ?)';
+    sql += ' AND (f.title LIKE ? OR f.original_title LIKE ? OR f.director LIKE ? OR f.synopsis LIKE ?)';
     const searchTerm = `%${search}%`;
     params.push(searchTerm, searchTerm, searchTerm, searchTerm);
   }
   if (genre) {
-    sql += ' AND genre LIKE ?';
+    sql += ' AND f.genre LIKE ?';
     params.push(`%${genre}%`);
   }
   if (country) {
-    sql += ' AND country LIKE ?';
+    sql += ' AND f.country LIKE ?';
     params.push(`%${country}%`);
   }
   if (year_min) {
-    sql += ' AND year >= ?';
+    sql += ' AND f.year >= ?';
     params.push(year_min);
   }
   if (year_max) {
-    sql += ' AND year <= ?';
+    sql += ' AND f.year <= ?';
     params.push(year_max);
   }
   if (rating_min) {
-    sql += ' AND rating >= ?';
+    sql += ' AND f.rating >= ?';
     params.push(rating_min);
   }
+  if (venue_id || has_screening) {
+    sql += ' AND EXISTS (SELECT 1 FROM screenings s WHERE s.film_id = f.id';
+    if (venue_id) {
+      sql += ' AND s.venue_id = ?';
+      params.push(venue_id);
+    }
+    sql += ')';
+  }
 
-  if (sort === 'year_desc') sql += ' ORDER BY year DESC';
-  else if (sort === 'year_asc') sql += ' ORDER BY year ASC';
-  else if (sort === 'rating_desc') sql += ' ORDER BY rating DESC';
-  else if (sort === 'title_asc') sql += ' ORDER BY title ASC';
-  else sql += ' ORDER BY created_at DESC';
+  if (sort === 'year_desc') sql += ' ORDER BY f.year DESC';
+  else if (sort === 'year_asc') sql += ' ORDER BY f.year ASC';
+  else if (sort === 'rating_desc') sql += ' ORDER BY f.rating DESC';
+  else if (sort === 'title_asc') sql += ' ORDER BY f.title ASC';
+  else sql += ' ORDER BY f.created_at DESC';
 
   const films = db.prepare(sql).all(...params);
   res.json(films);
@@ -198,11 +206,16 @@ function findOverlapConflicts(db, venueId, date, startTime, durationMinutes, exc
 // ============ 场馆 API ============
 
 app.get('/api/venues', (req, res) => {
-  const { active_only } = req.query;
+  const { active_only, search } = req.query;
   let sql = 'SELECT * FROM venues WHERE 1=1';
   const params = [];
   if (active_only) {
     sql += ' AND is_active = 1';
+  }
+  if (search) {
+    sql += ' AND (name LIKE ? OR location LIKE ? OR notes LIKE ?)';
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm);
   }
   sql += ' ORDER BY name ASC';
   const venues = db.prepare(sql).all(...params);
@@ -292,7 +305,7 @@ app.delete('/api/venues/:id', (req, res) => {
 });
 
 app.get('/api/screenings', (req, res) => {
-  const { date_from, date_to, venue_id } = req.query;
+  const { date_from, date_to, venue_id, search, ticket_status, film_id } = req.query;
   let sql = `
     SELECT s.*, f.title, f.director, f.year, f.poster, f.genre, v.name as venue_name, v.location as venue_location, v.capacity as venue_capacity
     FROM screenings s
@@ -313,6 +326,19 @@ app.get('/api/screenings', (req, res) => {
   if (venue_id) {
     sql += ' AND s.venue_id = ?';
     params.push(venue_id);
+  }
+  if (film_id) {
+    sql += ' AND s.film_id = ?';
+    params.push(film_id);
+  }
+  if (ticket_status) {
+    sql += ' AND s.ticket_status = ?';
+    params.push(ticket_status);
+  }
+  if (search) {
+    sql += ' AND (f.title LIKE ? OR f.original_title LIKE ? OR f.director LIKE ? OR v.name LIKE ? OR v.location LIKE ? OR s.venue LIKE ? OR s.location LIKE ? OR s.notes LIKE ?)';
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
   }
 
   sql += ' ORDER BY s.screening_date, s.screening_time';
@@ -498,7 +524,7 @@ app.delete('/api/screenings/:id', (req, res) => {
 // ============ 短评 API ============
 
 app.get('/api/reviews', (req, res) => {
-  const { sort = 'created_at_desc', include_hidden } = req.query;
+  const { sort = 'created_at_desc', include_hidden, search, film_id, rating_min, mood } = req.query;
   let orderSql = 'ORDER BY r.created_at DESC';
   if (sort === 'likes_desc') orderSql = 'ORDER BY r.likes DESC, r.created_at DESC';
   else if (sort === 'likes_asc') orderSql = 'ORDER BY r.likes ASC, r.created_at DESC';
@@ -506,8 +532,28 @@ app.get('/api/reviews', (req, res) => {
   else if (sort === 'created_at_asc') orderSql = 'ORDER BY r.created_at ASC';
 
   let whereSql = '';
+  const params = [];
   if (!include_hidden) {
     whereSql = 'WHERE r.is_hidden = 0';
+  } else {
+    whereSql = 'WHERE 1=1';
+  }
+  if (search) {
+    whereSql += ' AND (r.content LIKE ? OR r.author LIKE ? OR f.title LIKE ? OR f.original_title LIKE ? OR f.director LIKE ?)';
+    const searchTerm = `%${search}%`;
+    params.push(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm);
+  }
+  if (film_id) {
+    whereSql += ' AND r.film_id = ?';
+    params.push(film_id);
+  }
+  if (rating_min) {
+    whereSql += ' AND r.rating >= ?';
+    params.push(rating_min);
+  }
+  if (mood) {
+    whereSql += ' AND r.mood = ?';
+    params.push(mood);
   }
 
   const reviews = db.prepare(`
@@ -516,7 +562,7 @@ app.get('/api/reviews', (req, res) => {
     LEFT JOIN films f ON r.film_id = f.id
     ${whereSql}
     ${orderSql}
-  `).all();
+  `).all(...params);
   res.json(reviews);
 });
 
@@ -1059,6 +1105,71 @@ app.get('/api/collections/aggregate/themes', (req, res) => {
     .sort((a, b) => b.film_count - a.film_count);
 
   res.json(themes);
+});
+
+// ============ 统一搜索 API ============
+
+app.get('/api/search', (req, res) => {
+  const { q, type, limit = 20 } = req.query;
+  const result = { query: q, types: {} };
+
+  if (!q) {
+    return res.json(result);
+  }
+
+  const searchTerm = `%${q}%`;
+  const limitNum = Math.min(Number(limit) || 20, 100);
+  const types = type ? type.split(',').map(t => t.trim()) : ['films', 'screenings', 'reviews', 'venues'];
+
+  if (types.includes('films')) {
+    const films = db.prepare(`
+      SELECT * FROM films
+      WHERE title LIKE ? OR original_title LIKE ? OR director LIKE ? OR synopsis LIKE ? OR genre LIKE ?
+      ORDER BY rating DESC, created_at DESC
+      LIMIT ?
+    `).all(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, limitNum);
+    result.types.films = films;
+  }
+
+  if (types.includes('screenings')) {
+    const screenings = db.prepare(`
+      SELECT s.*, f.title, f.director, f.poster, f.genre, v.name as venue_name, v.location as venue_location
+      FROM screenings s
+      LEFT JOIN films f ON s.film_id = f.id
+      LEFT JOIN venues v ON s.venue_id = v.id
+      WHERE f.title LIKE ? OR f.original_title LIKE ? OR f.director LIKE ?
+         OR v.name LIKE ? OR v.location LIKE ? OR s.venue LIKE ? OR s.location LIKE ? OR s.notes LIKE ?
+      ORDER BY s.screening_date DESC, s.screening_time DESC
+      LIMIT ?
+    `).all(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, limitNum);
+    result.types.screenings = screenings;
+  }
+
+  if (types.includes('reviews')) {
+    const reviews = db.prepare(`
+      SELECT r.*, f.title, f.director, f.poster
+      FROM reviews r
+      LEFT JOIN films f ON r.film_id = f.id
+      WHERE r.is_hidden = 0 AND (
+        r.content LIKE ? OR r.author LIKE ? OR f.title LIKE ? OR f.original_title LIKE ? OR f.director LIKE ?
+      )
+      ORDER BY r.created_at DESC
+      LIMIT ?
+    `).all(searchTerm, searchTerm, searchTerm, searchTerm, searchTerm, limitNum);
+    result.types.reviews = reviews;
+  }
+
+  if (types.includes('venues')) {
+    const venues = db.prepare(`
+      SELECT * FROM venues
+      WHERE name LIKE ? OR location LIKE ? OR notes LIKE ?
+      ORDER BY name ASC
+      LIMIT ?
+    `).all(searchTerm, searchTerm, searchTerm, limitNum);
+    result.types.venues = venues;
+  }
+
+  res.json(result);
 });
 
 // ============ 统计数据 API ============
