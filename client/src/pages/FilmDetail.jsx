@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi, likeStore } from '../api.js';
+import FilmCard from '../components/FilmCard.jsx';
 
 const moodOptions = ['感动', '愉悦', '沉思', '震撼', '忧郁', '温暖'];
 const ratingOptions = [1, 2, 3, 4, 5];
@@ -43,11 +44,15 @@ export default function FilmDetail() {
   });
   const [showReportModal, setShowReportModal] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
+  const [similarFilms, setSimilarFilms] = useState([]);
   const statusDropdownRef = useRef(null);
 
   const fetchData = () => {
     setLoading(true);
-    filmsApi.get(id, { sort: reviewSort }).then(data => {
+    Promise.all([
+      filmsApi.get(id, { sort: reviewSort }),
+      filmsApi.similar(id, { limit: 6 }).catch(() => []),
+    ]).then(([data, similar]) => {
       setFilm(data);
       setIsFavorite(data.isFavorite);
       setTicketReminder(data.ticketReminderEnabled);
@@ -56,6 +61,7 @@ export default function FilmDetail() {
       setTicketDate(data.ticketDate);
       setWatchedDate(data.watchedDate);
       setPlanDate(data.planDate);
+      setSimilarFilms(similar || []);
       setLoading(false);
     }).catch(() => {
       navigate('/films');
@@ -716,6 +722,33 @@ export default function FilmDetail() {
             </div>
           )}
         </section>
+
+        {similarFilms.length > 0 && (
+          <section className="mt-16">
+            <div className="flex items-end justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-serif font-bold">相似推荐</h2>
+                <p className="text-film-cream/60 mt-1 text-sm">基于导演、国家、类型和评分智能匹配</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
+              {similarFilms.map(sf => (
+                <div key={sf.id} className="relative">
+                  <FilmCard film={sf} showFavorite={false} />
+                  {sf.match_reasons && sf.match_reasons.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {sf.match_reasons.slice(0, 2).map((reason, idx) => (
+                        <span key={idx} className="text-[10px] bg-film-gold/10 text-film-gold px-1.5 py-0.5 rounded">
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
       </div>
 
       {showReportModal && (

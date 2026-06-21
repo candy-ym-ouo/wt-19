@@ -144,6 +144,76 @@ app.delete('/api/films/:id', (req, res) => {
   res.json({ message: '删除成功' });
 });
 
+app.get('/api/films/:id/similar', (req, res) => {
+  const film = db.prepare('SELECT * FROM films WHERE id = ?').get(req.params.id);
+  if (!film) {
+    return res.status(404).json({ error: '影片不存在' });
+  }
+
+  const { limit = 6 } = req.query;
+  const limitNum = Math.min(Math.max(Number(limit) || 6, 1), 20);
+
+  const allFilms = db.prepare('SELECT * FROM films WHERE id != ?').all(req.params.id);
+
+  const filmGenres = (film.genre || '').split(/[\/、,，]/).map(g => g.trim()).filter(Boolean);
+  const filmCountries = (film.country || '').split(/[\/、,，]/).map(c => c.trim()).filter(Boolean);
+
+  const scored = allFilms.map(other => {
+    let score = 0;
+    const reasons = [];
+
+    if (film.director && other.director && film.director === other.director) {
+      score += 40;
+      reasons.push('同导演');
+    }
+
+    if (filmCountries.length > 0 && other.country) {
+      const otherCountries = other.country.split(/[\/、,，]/).map(c => c.trim()).filter(Boolean);
+      const shared = filmCountries.filter(c => otherCountries.includes(c));
+      if (shared.length > 0) {
+        score += 20 * shared.length;
+        reasons.push(`同国家/地区（${shared.join('、')}）`);
+      }
+    }
+
+    if (filmGenres.length > 0 && other.genre) {
+      const otherGenres = other.genre.split(/[\/、,，]/).map(g => g.trim()).filter(Boolean);
+      const shared = filmGenres.filter(g => otherGenres.includes(g));
+      if (shared.length > 0) {
+        score += 25 * shared.length;
+        reasons.push(`同类型（${shared.join('、')}）`);
+      }
+    }
+
+    if (film.rating && other.rating) {
+      const ratingDiff = Math.abs(film.rating - other.rating);
+      if (ratingDiff <= 0.5) {
+        score += 15;
+        reasons.push('评分相近');
+      } else if (ratingDiff <= 1.0) {
+        score += 8;
+      }
+    }
+
+    if (film.year && other.year) {
+      const yearDiff = Math.abs(film.year - other.year);
+      if (yearDiff <= 5) {
+        score += 5;
+      }
+    }
+
+    return { ...other, similarity_score: score, match_reasons: reasons };
+  });
+
+  scored.sort((a, b) => b.similarity_score - a.similarity_score);
+
+  const result = scored
+    .filter(f => f.similarity_score > 0)
+    .slice(0, limitNum);
+
+  res.json(result);
+});
+
 // ============ 放映日历 API ============
 
 function timeToMinutes(t) {

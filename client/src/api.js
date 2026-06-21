@@ -49,6 +49,10 @@ export const films = {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
     return request(`/films/${id}${qs ? '?' + qs : ''}`);
   },
+  similar: (id, params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/films/${id}/similar${qs ? '?' + qs : ''}`);
+  },
   create: (data) => request('/films', { method: 'POST', body: JSON.stringify(data) }),
   update: (id, data) => request(`/films/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id) => request(`/films/${id}`, { method: 'DELETE' }),

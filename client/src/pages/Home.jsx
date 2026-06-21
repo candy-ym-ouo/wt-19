@@ -15,6 +15,7 @@ export default function Home() {
   const [statsData, setStatsData] = useState(null);
   const [upcoming, setUpcoming] = useState([]);
   const [featuredCollections, setFeaturedCollections] = useState([]);
+  const [similarRecommendations, setSimilarRecommendations] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -23,12 +24,18 @@ export default function Home() {
       stats.get(),
       screenings.list(),
       collectionsApi.list({ featured: 1 }),
-    ]).then(([f, s, sc, cols]) => {
+    ]).then(async ([f, s, sc, cols]) => {
       setFeaturedFilms(f);
       setStatsData(s);
       const today = new Date().toISOString().split('T')[0];
       setUpcoming(sc.filter(x => x.screening_date >= today).slice(0, 5));
       setFeaturedCollections(cols.slice(0, 3));
+      if (f.length > 0) {
+        try {
+          const sim = await films.similar(f[0].id, { limit: 6 });
+          setSimilarRecommendations(sim);
+        } catch {}
+      }
       setLoading(false);
     });
   }, []);
@@ -182,6 +189,40 @@ export default function Home() {
           ))}
         </div>
       </section>
+
+      {similarRecommendations.length > 0 && featuredFilms.length > 0 && (
+        <section className="bg-film-dark/50">
+          <div className="max-w-7xl mx-auto px-6 py-16">
+            <div className="flex items-end justify-between mb-10">
+              <div>
+                <h2 className="text-2xl md:text-3xl font-serif font-bold">智能相似推荐</h2>
+                <p className="text-film-cream/60 mt-2">基于《{featuredFilms[0]?.title}》推荐 · 导演、国家、类型与评分综合匹配</p>
+              </div>
+              {featuredFilms[0] && (
+                <Link to={`/films/${featuredFilms[0].id}`} className="text-film-gold hover:underline text-sm">
+                  查看原片 →
+                </Link>
+              )}
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-5">
+              {similarRecommendations.map(film => (
+                <div key={film.id} className="relative">
+                  <FilmCard film={film} showFavorite={false} />
+                  {film.match_reasons && film.match_reasons.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {film.match_reasons.slice(0, 2).map((reason, idx) => (
+                        <span key={idx} className="text-[10px] bg-film-gold/10 text-film-gold px-1.5 py-0.5 rounded">
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       {upcoming.length > 0 && (
         <section className="bg-film-dark/50">

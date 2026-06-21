@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { favorites as favApi } from '../api.js';
+import { favorites as favApi, films as filmsApi } from '../api.js';
 import FilmCard from '../components/FilmCard.jsx';
 
 const WATCH_STATUS_CONFIG = {
@@ -166,6 +166,9 @@ export default function Favorites() {
 
 function WatchPlanItem({ item, onToggleFavorite, onChangeStatus }) {
   const [showMenu, setShowMenu] = useState(false);
+  const [showSimilar, setShowSimilar] = useState(false);
+  const [similarFilms, setSimilarFilms] = useState([]);
+  const [similarLoading, setSimilarLoading] = useState(false);
   const status = item.watch_status || 'want_to_watch';
   const statusCfg = WATCH_STATUS_CONFIG[status] || WATCH_STATUS_CONFIG.want_to_watch;
 
@@ -173,6 +176,25 @@ function WatchPlanItem({ item, onToggleFavorite, onChangeStatus }) {
     want_to_watch: 'ticketed',
     ticketed: 'watched',
     watched: null,
+  };
+
+  const handleToggleSimilar = async () => {
+    setShowMenu(false);
+    if (!showSimilar) {
+      setShowSimilar(true);
+      if (similarFilms.length === 0) {
+        setSimilarLoading(true);
+        try {
+          const data = await filmsApi.similar(item.film_id, { limit: 4 });
+          setSimilarFilms(data || []);
+        } catch {
+          setSimilarFilms([]);
+        }
+        setSimilarLoading(false);
+      }
+    } else {
+      setShowSimilar(false);
+    }
   };
 
   return (
@@ -237,6 +259,19 @@ function WatchPlanItem({ item, onToggleFavorite, onChangeStatus }) {
                     </button>
                   </div>
                 )}
+                <div className="border-t border-film-gray/30">
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleToggleSimilar();
+                    }}
+                    className="w-full px-3 py-2 text-left text-xs hover:bg-film-gold/10 text-film-gold flex items-center gap-2 transition-colors"
+                  >
+                    <span>🎬</span>
+                    <span className="flex-1">{showSimilar ? '收起相似推荐' : '找相似影片'}</span>
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -265,6 +300,52 @@ function WatchPlanItem({ item, onToggleFavorite, onChangeStatus }) {
           </div>
         )}
       </div>
+      {showSimilar && (
+        <div className="mt-3 p-3 bg-film-dark/80 rounded-lg border border-film-gray/50">
+          <div className="text-xs text-film-gold mb-2 font-medium flex items-center gap-1">
+            <span>🎯</span> 相似推荐
+          </div>
+          {similarLoading ? (
+            <div className="text-xs text-film-cream/50 py-4 text-center">加载中...</div>
+          ) : similarFilms.length === 0 ? (
+            <div className="text-xs text-film-cream/50 py-4 text-center">暂无相似推荐</div>
+          ) : (
+            <div className="space-y-2">
+              {similarFilms.map(sf => (
+                <Link
+                  key={sf.id}
+                  to={`/films/${sf.id}`}
+                  className="flex items-center gap-2 p-2 rounded-lg hover:bg-film-gray/50 transition-colors group"
+                >
+                  <div className="w-8 h-12 bg-film-gray rounded overflow-hidden flex-shrink-0">
+                    {sf.poster && <img src={sf.poster} alt="" className="w-full h-full object-cover" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium text-film-cream group-hover:text-film-gold transition-colors truncate">
+                      {sf.title}
+                    </div>
+                    <div className="text-[10px] text-film-cream/50 truncate">
+                      {sf.director} · {sf.year}
+                    </div>
+                    {sf.match_reasons && sf.match_reasons.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {sf.match_reasons.slice(0, 2).map((r, i) => (
+                          <span key={i} className="text-[9px] bg-film-gold/10 text-film-gold px-1 rounded">
+                            {r}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  {sf.rating && (
+                    <div className="text-xs text-film-gold font-bold flex-shrink-0">★{sf.rating}</div>
+                  )}
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
