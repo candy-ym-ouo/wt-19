@@ -58,7 +58,14 @@ app.get('/api/films/:id', (req, res) => {
     return res.status(404).json({ error: '影片不存在' });
   }
 
-  const reviews = db.prepare('SELECT * FROM reviews WHERE film_id = ? ORDER BY created_at DESC').all(req.params.id);
+  const { sort = 'created_at_desc' } = req.query;
+  let orderSql = 'ORDER BY created_at DESC';
+  if (sort === 'likes_desc') orderSql = 'ORDER BY likes DESC, created_at DESC';
+  else if (sort === 'likes_asc') orderSql = 'ORDER BY likes ASC, created_at DESC';
+  else if (sort === 'rating_desc') orderSql = 'ORDER BY rating DESC, created_at DESC';
+  else if (sort === 'created_at_asc') orderSql = 'ORDER BY created_at ASC';
+
+  const reviews = db.prepare(`SELECT * FROM reviews WHERE film_id = ? AND is_hidden = 0 ${orderSql}`).all(req.params.id);
   const screenings = db.prepare('SELECT * FROM screenings WHERE film_id = ? ORDER BY screening_date, screening_time').all(req.params.id);
   const favorite = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.id);
 
@@ -253,25 +260,38 @@ app.delete('/api/screenings/:id', (req, res) => {
 // ============ 短评 API ============
 
 app.get('/api/reviews', (req, res) => {
+  const { sort = 'created_at_desc', include_hidden } = req.query;
+  let orderSql = 'ORDER BY r.created_at DESC';
+  if (sort === 'likes_desc') orderSql = 'ORDER BY r.likes DESC, r.created_at DESC';
+  else if (sort === 'likes_asc') orderSql = 'ORDER BY r.likes ASC, r.created_at DESC';
+  else if (sort === 'rating_desc') orderSql = 'ORDER BY r.rating DESC, r.created_at DESC';
+  else if (sort === 'created_at_asc') orderSql = 'ORDER BY r.created_at ASC';
+
+  let whereSql = '';
+  if (!include_hidden) {
+    whereSql = 'WHERE r.is_hidden = 0';
+  }
+
   const reviews = db.prepare(`
     SELECT r.*, f.title, f.director, f.poster
     FROM reviews r
     LEFT JOIN films f ON r.film_id = f.id
-    ORDER BY r.created_at DESC
+    ${whereSql}
+    ${orderSql}
   `).all();
   res.json(reviews);
 });
 
 app.post('/api/reviews', (req, res) => {
-  const { film_id, author, content, rating, mood, watched_date } = req.body;
+  const { film_id, author, content, rating, mood, watched_date, is_spoiler } = req.body;
   if (!film_id || !content) {
     return res.status(400).json({ error: '影片和评论内容不能为空' });
   }
 
   const info = db.prepare(`
-    INSERT INTO reviews (film_id, author, content, rating, mood, watched_date)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(film_id, author || '匿名观众', content, rating || null, mood || null, watched_date || null);
+    INSERT INTO reviews (film_id, author, content, rating, mood, watched_date, is_spoiler)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(film_id, author || '匿名观众', content, rating || null, mood || null, watched_date || null, is_spoiler ? 1 : 0);
 
   const review = db.prepare(`
     SELECT r.*, f.title, f.director, f.poster
@@ -282,12 +302,102 @@ app.post('/api/reviews', (req, res) => {
   res.status(201).json(review);
 });
 
+app.put('/api/reviews/:id/like', (req, res) => {
+  const review = db.prepare('SELECT * FROM reviews WHERE id = ?').get(req.params.id);
+  if (!review) {
+    return res.status(404).json({ error: '评论不存在' });
+  }
+
+  db.prepare('UPDATE reviews SET likes = likes + 1 WHERE id = ?').run(req.params.id);
+  const updated = db.prepare('SELECT * FROM reviews WHERE id = ?').get(req.params.id);
+  res.json({ likes: updated.likes });
+});
+
 app.delete('/api/reviews/:id', (req, res) => {
   const info = db.prepare('DELETE FROM reviews WHERE id = ?').run(req.params.id);
   if (info.changes === 0) {
     return res.status(404).json({ error: '评论不存在' });
   }
   res.json({ message: '删除成功' });
+});
+
+// ============ 举报 API ============
+
+app.get('/api/reports', (req, res) => {
+  const { status } = req.query;
+  let sql = `
+    SELECT rpt.*, r.content as review_content, r.author as review_author, r.film_id, f.title, f.poster
+    FROM reports rpt
+    LEFT JOIN reviews r ON rpt.review_id = r.id
+    LEFT JOIN films f ON r.film_id = f.id
+  `;
+  const params = [];
+  if (status) {
+    sql += ' WHERE rpt.status = ?';
+    params.push(status);
+  }
+  sql += ' ORDER BY rpt.created_at DESC';
+  const reports = db.prepare(sql).all(...params);
+  res.json(reports);
+});
+
+app.post('/api/reports', (req, res) => {
+  const { review_id, reason, reporter } = req.body;
+  if (!review_id || !reason) {
+    return res.status(400).json({ error: '评论ID和举报原因不能为空' });
+  }
+
+  const review = db.prepare('SELECT * FROM reviews WHERE id = ?').get(review_id);
+  if (!review) {
+    return res.status(404).json({ error: '评论不存在' });
+  }
+
+  const info = db.prepare(`
+    INSERT INTO reports (review_id, reason, reporter)
+    VALUES (?, ?, ?)
+  `).run(review_id, reason, reporter || '匿名用户');
+
+  const report = db.prepare(`
+    SELECT rpt.*, r.content as review_content, r.author as review_author, r.film_id, f.title, f.poster
+    FROM reports rpt
+    LEFT JOIN reviews r ON rpt.review_id = r.id
+    LEFT JOIN films f ON r.film_id = f.id
+    WHERE rpt.id = ?
+  `).get(info.lastInsertRowid);
+
+  res.status(201).json(report);
+});
+
+app.put('/api/reports/:id/handle', (req, res) => {
+  const report = db.prepare('SELECT * FROM reports WHERE id = ?').get(req.params.id);
+  if (!report) {
+    return res.status(404).json({ error: '举报不存在' });
+  }
+
+  const { status, handle_note, handler } = req.body;
+  if (!status || !['approved', 'rejected'].includes(status)) {
+    return res.status(400).json({ error: '无效的处理状态' });
+  }
+
+  db.prepare(`
+    UPDATE reports 
+    SET status = ?, handle_note = ?, handler = ?, handled_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(status, handle_note || null, handler || '管理员', req.params.id);
+
+  if (status === 'approved') {
+    db.prepare('UPDATE reviews SET is_hidden = 1 WHERE id = ?').run(report.review_id);
+  }
+
+  const updated = db.prepare(`
+    SELECT rpt.*, r.content as review_content, r.author as review_author, r.film_id, f.title, f.poster
+    FROM reports rpt
+    LEFT JOIN reviews r ON rpt.review_id = r.id
+    LEFT JOIN films f ON r.film_id = f.id
+    WHERE rpt.id = ?
+  `).get(req.params.id);
+
+  res.json(updated);
 });
 
 // ============ 收藏夹 API ============
@@ -400,6 +510,7 @@ app.get('/api/stats', (req, res) => {
   const reviewCount = db.prepare('SELECT COUNT(*) as count FROM reviews').get().count;
   const favoriteCount = db.prepare('SELECT COUNT(*) as count FROM favorites').get().count;
   const unreadNotificationCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE is_read = 0').get().count;
+  const pendingReportCount = db.prepare('SELECT COUNT(*) as count FROM reports WHERE status = ?').get('pending').count;
 
   const upcomingScreenings = db.prepare(`
     SELECT s.*, f.title, f.poster
@@ -429,6 +540,7 @@ app.get('/api/stats', (req, res) => {
     reviewCount,
     favoriteCount,
     unreadNotificationCount,
+    pendingReportCount,
     upcomingScreenings,
     recentReviews,
     recentNotifications

@@ -17,7 +17,10 @@ export const films = {
     const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
     return request(`/films${qs ? '?' + qs : ''}`);
   },
-  get: (id) => request(`/films/${id}`),
+  get: (id, params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/films/${id}${qs ? '?' + qs : ''}`);
+  },
   create: (data) => request('/films', { method: 'POST', body: JSON.stringify(data) }),
   update: (id, data) => request(`/films/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id) => request(`/films/${id}`, { method: 'DELETE' }),
@@ -34,9 +37,22 @@ export const screenings = {
 };
 
 export const reviews = {
-  list: () => request('/reviews'),
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/reviews${qs ? '?' + qs : ''}`);
+  },
   create: (data) => request('/reviews', { method: 'POST', body: JSON.stringify(data) }),
   delete: (id) => request(`/reviews/${id}`, { method: 'DELETE' }),
+  like: (id) => request(`/reviews/${id}/like`, { method: 'PUT' }),
+};
+
+export const reports = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/reports${qs ? '?' + qs : ''}`);
+  },
+  create: (data) => request('/reports', { method: 'POST', body: JSON.stringify(data) }),
+  handle: (id, data) => request(`/reports/${id}/handle`, { method: 'PUT', body: JSON.stringify(data) }),
 };
 
 export const favorites = {

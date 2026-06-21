@@ -49,8 +49,24 @@ db.exec(`
     rating INTEGER,
     mood TEXT,
     watched_date TEXT,
+    is_spoiler INTEGER DEFAULT 0,
+    likes INTEGER DEFAULT 0,
+    is_hidden INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    reporter TEXT,
+    status TEXT DEFAULT 'pending',
+    handle_note TEXT,
+    handler TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    handled_at DATETIME,
+    FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS favorites (
@@ -98,6 +114,31 @@ if (!favColNames.includes('ticket_reminder_enabled')) {
   `);
 }
 
+const reviewColumns = db.prepare("PRAGMA table_info(reviews)").all();
+const reviewColNames = reviewColumns.map(c => c.name);
+if (!reviewColNames.includes('is_spoiler')) {
+  db.exec(`
+    ALTER TABLE reviews ADD COLUMN is_spoiler INTEGER DEFAULT 0;
+    ALTER TABLE reviews ADD COLUMN likes INTEGER DEFAULT 0;
+    ALTER TABLE reviews ADD COLUMN is_hidden INTEGER DEFAULT 0;
+  `);
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    review_id INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    reporter TEXT,
+    status TEXT DEFAULT 'pending',
+    handle_note TEXT,
+    handler TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    handled_at DATETIME,
+    FOREIGN KEY (review_id) REFERENCES reviews(id) ON DELETE CASCADE
+  );
+`);
+
 const filmCount = db.prepare('SELECT COUNT(*) as count FROM films').get().count;
 if (filmCount === 0) {
   const insertFilm = db.prepare(`
@@ -111,8 +152,8 @@ if (filmCount === 0) {
   `);
 
   const insertReview = db.prepare(`
-    INSERT INTO reviews (film_id, author, content, rating, mood, watched_date)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO reviews (film_id, author, content, rating, mood, watched_date, is_spoiler, likes)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const films = [
@@ -220,14 +261,14 @@ if (filmCount === 0) {
   });
 
   const reviews = [
-    { filmIndex: 0, author: '影迷阿明', content: '旗袍、留声机、昏黄的灯光，王家卫把60年代的香港拍成了一场永不褪色的梦。张曼玉和梁朝伟的表演细腻到骨子里，那种欲言又止的情感张力令人窒息。', rating: 5, mood: '感动', watchedDate: '2026-06-15' },
-    { filmIndex: 1, author: '电影爱好者', content: 'California Dreamin\' 响起的时候，整个世界都在摇晃。金城武的跑步、梁朝伟的独白、王菲的梦游，这是最自由的电影。', rating: 5, mood: '愉悦', watchedDate: '2026-06-10' },
-    { filmIndex: 2, author: '新浪潮信徒', content: '安托万奔向大海的那个长镜头，是电影史上最动人的自由宣言。特吕弗用最朴素的镜头语言，拍出了最深刻的童年孤独。', rating: 5, mood: '沉思', watchedDate: '2026-06-05' },
-    { filmIndex: 3, author: '小津粉', content: '低角度、固定镜头、克制的表演，小津安二郎把日本家庭的悲欢离合拍得如水墨画般淡雅。原节子的笑容温暖人心，最后的空镜头令人泪目。', rating: 5, mood: '感动', watchedDate: '2026-05-28' }
+    { filmIndex: 0, author: '影迷阿明', content: '旗袍、留声机、昏黄的灯光，王家卫把60年代的香港拍成了一场永不褪色的梦。张曼玉和梁朝伟的表演细腻到骨子里，那种欲言又止的情感张力令人窒息。', rating: 5, mood: '感动', watchedDate: '2026-06-15', isSpoiler: 0, likes: 42 },
+    { filmIndex: 1, author: '电影爱好者', content: 'California Dreamin\' 响起的时候，整个世界都在摇晃。金城武的跑步、梁朝伟的独白、王菲的梦游，这是最自由的电影。', rating: 5, mood: '愉悦', watchedDate: '2026-06-10', isSpoiler: 0, likes: 28 },
+    { filmIndex: 2, author: '新浪潮信徒', content: '安托万奔向大海的那个长镜头，是电影史上最动人的自由宣言。特吕弗用最朴素的镜头语言，拍出了最深刻的童年孤独。', rating: 5, mood: '沉思', watchedDate: '2026-06-05', isSpoiler: 0, likes: 35 },
+    { filmIndex: 3, author: '小津粉', content: '【剧透预警】老夫妇最终先后离世，纪子选择继续守寡，那种淡淡的悲伤贯穿始终。低角度、固定镜头、克制的表演，小津安二郎把日本家庭的悲欢离合拍得如水墨画般淡雅。原节子的笑容温暖人心，最后的空镜头令人泪目。', rating: 5, mood: '感动', watchedDate: '2026-05-28', isSpoiler: 1, likes: 15 }
   ];
 
   reviews.forEach(r => {
-    insertReview.run(filmIds[r.filmIndex], r.author, r.content, r.rating, r.mood, r.watchedDate);
+    insertReview.run(filmIds[r.filmIndex], r.author, r.content, r.rating, r.mood, r.watchedDate, r.isSpoiler, r.likes);
   });
 
   db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(filmIds[0], 1, 1);

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi } from '../api.js';
+import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi } from '../api.js';
 
 const emptyFilm = {
   title: '', original_title: '', director: '', year: '', country: '',
@@ -20,6 +20,8 @@ export default function Admin() {
   const [reviewList, setReviewList] = useState([]);
   const [notificationList, setNotificationList] = useState([]);
   const [favoriteList, setFavoriteList] = useState([]);
+  const [reportList, setReportList] = useState([]);
+  const [reportFilter, setReportFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [showFilmForm, setShowFilmForm] = useState(false);
   const [showScreeningForm, setShowScreeningForm] = useState(false);
@@ -30,9 +32,9 @@ export default function Admin() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [s, f, sc, r, n, fav] = await Promise.all([
-      statsApi.get(), filmsApi.list(), screeningsApi.list(), reviewsApi.list(),
-      notifApi.list(), favApi.list()
+    const [s, f, sc, r, n, fav, rp] = await Promise.all([
+      statsApi.get(), filmsApi.list(), screeningsApi.list(), reviewsApi.list({ include_hidden: 1 }),
+      notifApi.list(), favApi.list(), reportsApi.list()
     ]);
     setStats(s);
     setFilmList(f);
@@ -40,6 +42,7 @@ export default function Admin() {
     setReviewList(r);
     setNotificationList(n);
     setFavoriteList(fav);
+    setReportList(rp);
     setLoading(false);
   };
 
@@ -205,11 +208,23 @@ export default function Admin() {
     }
   };
 
+  const handleReport = async (reportId, status, handleNote = '') => {
+    const confirmMsg = status === 'approved' ? '确定通过此举报？相关评论将被隐藏。' : '确定驳回此举报？';
+    if (!confirm(confirmMsg)) return;
+    try {
+      await reportsApi.handle(reportId, { status, handle_note: handleNote });
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const tabs = [
     { key: 'overview', label: '总览', icon: '📊' },
     { key: 'films', label: '影片管理', icon: '🎬' },
     { key: 'screenings', label: '放映场次', icon: '📅' },
     { key: 'reviews', label: '短评管理', icon: '✍️' },
+    { key: 'reports', label: '举报审核', icon: '🚨' },
     { key: 'favorites', label: '收藏与提醒', icon: '🔔' },
     { key: 'notifications', label: '通知中心', icon: '📬' },
   ];
@@ -242,12 +257,13 @@ export default function Admin() {
 
       {activeTab === 'overview' && stats && (
         <div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-10">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 mb-10">
             {[
               { label: '影片总数', value: stats.filmCount, icon: '🎬', color: 'from-film-gold/20 to-film-gold/5' },
               { label: '放映场次', value: stats.screeningCount, icon: '📅', color: 'from-blue-500/20 to-blue-500/5' },
               { label: '短评数量', value: stats.reviewCount, icon: '✍️', color: 'from-pink-500/20 to-pink-500/5' },
               { label: '收藏数量', value: stats.favoriteCount, icon: '❤️', color: 'from-red-500/20 to-red-500/5' },
+              { label: '待审举报', value: stats.pendingReportCount, icon: '🚨', color: 'from-red-500/20 to-red-500/5' },
               { label: '未读通知', value: stats.unreadNotificationCount, icon: '🔔', color: 'from-orange-500/20 to-orange-500/5' },
               { label: '通知总数', value: notificationList.length, icon: '📬', color: 'from-purple-500/20 to-purple-500/5' },
             ].map(item => (
@@ -471,14 +487,26 @@ export default function Admin() {
           <p className="text-film-cream/60 mb-6">共 {reviewList.length} 条短评</p>
           <div className="space-y-3">
             {reviewList.map(r => (
-              <div key={r.id} className="group p-5 bg-film-dark/50 rounded-xl border border-film-gray/50">
+              <div key={r.id} className={`group p-5 rounded-xl border ${r.is_hidden ? 'bg-film-dark/30 border-film-gray/30 opacity-60' : 'bg-film-dark/50 border-film-gray/50'}`}>
                 <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 rounded-full bg-gradient-to-br from-film-gold/40 to-film-red/40 flex items-center justify-center text-sm font-semibold">
                       {(r.author || '匿')[0]}
                     </div>
                     <div>
-                      <div className="font-medium">{r.author || '匿名观众'}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{r.author || '匿名观众'}</span>
+                        {r.is_spoiler && (
+                          <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
+                            剧透
+                          </span>
+                        )}
+                        {r.is_hidden && (
+                          <span className="text-xs bg-gray-500/20 text-gray-400 px-2 py-0.5 rounded-full">
+                            已隐藏
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-film-cream/40">
                         {r.watched_date && `观看于 ${r.watched_date}`}
                         {r.created_at && ` · 发布于 ${new Date(r.created_at).toLocaleDateString('zh-CN')}`}
@@ -487,9 +515,13 @@ export default function Admin() {
                   </div>
                   <div className="flex items-center gap-3">
                     {r.rating && <span className="text-film-gold text-sm">{'★'.repeat(r.rating)}{'☆'.repeat(5 - r.rating)}</span>}
+                    <span className="text-film-cream/50 text-sm flex items-center gap-1">
+                      👍 {r.likes || 0}
+                    </span>
                     <button
                       onClick={() => handleDeleteReview(r.id)}
                       className="text-film-cream/30 hover:text-film-red p-1.5 rounded hover:bg-film-red/10 transition-colors opacity-0 group-hover:opacity-100"
+                      title="删除"
                     >
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -509,6 +541,105 @@ export default function Admin() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'reports' && (
+        <div>
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <p className="text-film-cream/60">共 {reportList.length} 条举报，待处理 {reportList.filter(r => r.status === 'pending').length} 条</p>
+            <div className="flex gap-2">
+              {['all', 'pending', 'approved', 'rejected'].map(filter => (
+                <button
+                  key={filter}
+                  onClick={() => setReportFilter(filter)}
+                  className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                    reportFilter === filter
+                      ? 'bg-film-gold text-film-black'
+                      : 'bg-film-gray/50 text-film-cream/60 hover:text-film-cream'
+                  }`}
+                >
+                  {filter === 'all' ? '全部' : filter === 'pending' ? '待处理' : filter === 'approved' ? '已通过' : '已驳回'}
+                </button>
+              ))}
+            </div>
+          </div>
+          {reportList.length === 0 ? (
+            <div className="py-16 text-center text-film-cream/50 border border-dashed border-film-gray rounded-xl">
+              暂无举报记录
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {reportList
+                .filter(r => reportFilter === 'all' || r.status === reportFilter)
+                .map(rpt => (
+                  <div key={rpt.id} className="p-5 bg-film-dark/50 rounded-xl border border-film-gray/50">
+                    <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                      <div className="flex items-center gap-3">
+                        <span className="text-2xl">🚨</span>
+                        <div>
+                          <div className="font-medium">
+                            举报原因：<span className="text-film-gold">{rpt.reason}</span>
+                          </div>
+                          <div className="text-xs text-film-cream/40 mt-1">
+                            举报人：{rpt.reporter || '匿名用户'} · {new Date(rpt.created_at).toLocaleString('zh-CN')}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs px-2.5 py-1 rounded-full ${
+                          rpt.status === 'pending' ? 'bg-yellow-500/20 text-yellow-400' :
+                          rpt.status === 'approved' ? 'bg-green-500/20 text-green-400' :
+                          'bg-gray-500/20 text-gray-400'
+                        }`}>
+                          {rpt.status === 'pending' ? '待处理' : rpt.status === 'approved' ? '已通过' : '已驳回'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 bg-film-black/40 rounded-lg mb-4">
+                      <div className="text-xs text-film-cream/50 mb-2">被举报评论：</div>
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-film-gold/40 to-film-red/40 flex items-center justify-center text-xs font-semibold">
+                          {(rpt.review_author || '匿')[0]}
+                        </div>
+                        <div>
+                          <div className="text-sm font-medium">{rpt.review_author || '匿名观众'}</div>
+                          {rpt.title && (
+                            <Link to={`/films/${rpt.film_id}`} className="text-xs text-film-gold hover:underline">
+                              《{rpt.title}》
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                      <p className="text-sm text-film-cream/70 leading-relaxed">{rpt.review_content}</p>
+                    </div>
+
+                    {rpt.status === 'pending' ? (
+                      <div className="flex gap-2 justify-end">
+                        <button
+                          onClick={() => handleReport(rpt.id, 'rejected')}
+                          className="px-4 py-2 text-sm bg-film-gray text-film-cream/70 rounded-lg hover:bg-film-gray/80 transition-colors"
+                        >
+                          驳回举报
+                        </button>
+                        <button
+                          onClick={() => handleReport(rpt.id, 'approved')}
+                          className="px-4 py-2 text-sm bg-film-red text-white rounded-lg hover:bg-film-red/90 transition-colors"
+                        >
+                          通过并隐藏评论
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="text-xs text-film-cream/40 pt-2 border-t border-film-gray/30">
+                        处理人：{rpt.handler || '管理员'} · {rpt.handled_at && new Date(rpt.handled_at).toLocaleString('zh-CN')}
+                        {rpt.handle_note && <span className="ml-2">· 备注：{rpt.handle_note}</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
       )}
 

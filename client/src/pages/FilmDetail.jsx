@@ -1,9 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { films as filmsApi, reviews as reviewsApi, favorites as favApi } from '../api.js';
+import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi } from '../api.js';
 
 const moodOptions = ['感动', '愉悦', '沉思', '震撼', '忧郁', '温暖'];
 const ratingOptions = [1, 2, 3, 4, 5];
+const sortOptions = [
+  { value: 'created_at_desc', label: '最新发布' },
+  { value: 'likes_desc', label: '最多点赞' },
+  { value: 'rating_desc', label: '评分最高' },
+];
+const reportReasons = ['剧透', '人身攻击', '垃圾广告', '违规内容', '其他'];
 
 export default function FilmDetail() {
   const { id } = useParams();
@@ -14,11 +20,16 @@ export default function FilmDetail() {
   const [ticketReminder, setTicketReminder] = useState(false);
   const [scheduleReminder, setScheduleReminder] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
-  const [reviewForm, setReviewForm] = useState({ author: '', content: '', rating: 5, mood: '', watched_date: '' });
+  const [reviewForm, setReviewForm] = useState({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
+  const [reviewSort, setReviewSort] = useState('created_at_desc');
+  const [showSpoilers, setShowSpoilers] = useState({});
+  const [likedReviews, setLikedReviews] = useState({});
+  const [showReportModal, setShowReportModal] = useState(null);
+  const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
 
   const fetchData = () => {
     setLoading(true);
-    filmsApi.get(id).then(data => {
+    filmsApi.get(id, { sort: reviewSort }).then(data => {
       setFilm(data);
       setIsFavorite(data.isFavorite);
       setTicketReminder(data.ticketReminderEnabled);
@@ -31,7 +42,47 @@ export default function FilmDetail() {
 
   useEffect(() => {
     fetchData();
-  }, [id]);
+  }, [id, reviewSort]);
+
+  const toggleSpoiler = (reviewId) => {
+    setShowSpoilers(prev => ({ ...prev, [reviewId]: !prev[reviewId] }));
+  };
+
+  const handleLike = async (reviewId) => {
+    if (likedReviews[reviewId]) return;
+    try {
+      const res = await reviewsApi.like(reviewId);
+      setLikedReviews(prev => ({ ...prev, [reviewId]: true }));
+      setFilm(prev => ({
+        ...prev,
+        reviews: prev.reviews.map(r =>
+          r.id === reviewId ? { ...r, likes: res.likes } : r
+        )
+      }));
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleReport = async (e) => {
+    e.preventDefault();
+    if (!reportForm.reason) {
+      alert('请选择举报原因');
+      return;
+    }
+    try {
+      await reportsApi.create({
+        review_id: showReportModal,
+        reason: reportForm.reason,
+        reporter: reportForm.reporter || '匿名用户'
+      });
+      alert('举报已提交，我们会尽快处理');
+      setShowReportModal(null);
+      setReportForm({ reason: '', reporter: '' });
+    } catch (err) {
+      alert(err.message);
+    }
+  };
 
   const handleToggleFavorite = async () => {
     try {
@@ -82,9 +133,9 @@ export default function FilmDetail() {
       return;
     }
     try {
-      await reviewsApi.create({ ...reviewForm, film_id: id });
+      await reviewsApi.create({ ...reviewForm, film_id: id, is_spoiler: reviewForm.is_spoiler ? 1 : 0 });
       setShowReviewForm(false);
-      setReviewForm({ author: '', content: '', rating: 5, mood: '', watched_date: '' });
+      setReviewForm({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
       fetchData();
     } catch (err) {
       alert(err.message);
@@ -354,6 +405,17 @@ export default function FilmDetail() {
                     className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
                   />
                 </div>
+                <div className="flex items-center gap-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={reviewForm.is_spoiler}
+                      onChange={(e) => setReviewForm({ ...reviewForm, is_spoiler: e.target.checked })}
+                      className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
+                    />
+                    <span className="text-sm text-film-cream/80">标记为剧透</span>
+                  </label>
+                </div>
                 <div className="flex justify-end gap-3">
                   <button
                     type="button"
@@ -375,9 +437,23 @@ export default function FilmDetail() {
         )}
 
         <section>
-          <h2 className="text-2xl font-serif font-bold mb-6">
-            观后短评 <span className="text-film-cream/40 text-base font-sans">({film.reviews?.length || 0})</span>
-          </h2>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <h2 className="text-2xl font-serif font-bold">
+              观后短评 <span className="text-film-cream/40 text-base font-sans">({film.reviews?.length || 0})</span>
+            </h2>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-film-cream/50">排序：</span>
+              <select
+                value={reviewSort}
+                onChange={(e) => setReviewSort(e.target.value)}
+                className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+              >
+                {sortOptions.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
           {!film.reviews || film.reviews.length === 0 ? (
             <div className="py-12 text-center text-film-cream/50 border border-dashed border-film-gray rounded-xl">
               还没有短评，快来发表第一条吧
@@ -391,7 +467,14 @@ export default function FilmDetail() {
                       {(r.author || '匿')[0]}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium">{r.author || '匿名观众'}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{r.author || '匿名观众'}</span>
+                        {r.is_spoiler && (
+                          <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">
+                            剧透
+                          </span>
+                        )}
+                      </div>
                       <div className="text-xs text-film-cream/40">
                         {r.watched_date && `观看于 ${r.watched_date}`}
                         {r.mood && ` · 心情：${r.mood}`}
@@ -403,13 +486,114 @@ export default function FilmDetail() {
                       </div>
                     )}
                   </div>
-                  <p className="text-film-cream/85 leading-relaxed font-serif">{r.content}</p>
+                  {r.is_spoiler && !showSpoilers[r.id] ? (
+                    <div className="py-6 text-center">
+                      <p className="text-film-cream/40 mb-3">此评论包含剧透内容</p>
+                      <button
+                        onClick={() => toggleSpoiler(r.id)}
+                        className="text-sm text-film-gold hover:underline"
+                      >
+                        点击展开查看
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="text-film-cream/85 leading-relaxed font-serif">{r.content}</p>
+                  )}
+                  <div className="mt-4 pt-3 border-t border-film-gray/30 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => handleLike(r.id)}
+                        className={`flex items-center gap-1.5 text-sm transition-colors ${
+                          likedReviews[r.id]
+                            ? 'text-film-gold'
+                            : 'text-film-cream/50 hover:text-film-gold'
+                        }`}
+                      >
+                        <svg className="w-4 h-4" fill={likedReviews[r.id] ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5" />
+                        </svg>
+                        <span>{r.likes || 0}</span>
+                      </button>
+                    </div>
+                    <button
+                      onClick={() => {
+                        setShowReportModal(r.id);
+                        setReportForm({ reason: '', reporter: '' });
+                      }}
+                      className="text-xs text-film-cream/40 hover:text-film-red transition-colors"
+                    >
+                      举报
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>
           )}
         </section>
       </div>
+
+      {showReportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowReportModal(null)}>
+          <div className="bg-film-dark w-full max-w-md rounded-2xl border border-film-gray" onClick={e => e.stopPropagation()}>
+            <div className="border-b border-film-gray/50 p-5 flex items-center justify-between">
+              <h2 className="text-xl font-serif font-bold">举报评论</h2>
+              <button
+                onClick={() => setShowReportModal(null)}
+                className="p-2 rounded-lg hover:bg-film-gray transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleReport} className="p-5 space-y-4">
+              <div>
+                <label className="text-xs text-film-cream/60 mb-2 block">举报原因 *</label>
+                <div className="space-y-2">
+                  {reportReasons.map(reason => (
+                    <label key={reason} className="flex items-center gap-2 cursor-pointer p-2 rounded-lg hover:bg-film-black/50 transition-colors">
+                      <input
+                        type="radio"
+                        name="reportReason"
+                        value={reason}
+                        checked={reportForm.reason === reason}
+                        onChange={(e) => setReportForm({ ...reportForm, reason: e.target.value })}
+                        className="w-4 h-4 text-film-gold bg-film-black border-film-gray focus:ring-film-gold"
+                      />
+                      <span className="text-sm text-film-cream/80">{reason}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">您的昵称（选填）</label>
+                <input
+                  type="text"
+                  value={reportForm.reporter}
+                  onChange={(e) => setReportForm({ ...reportForm, reporter: e.target.value })}
+                  placeholder="匿名用户"
+                  className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowReportModal(null)}
+                  className="px-5 py-2.5 rounded-lg text-film-cream/60 hover:text-film-cream transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-lg bg-film-red text-white font-medium hover:bg-film-red/90 transition-colors"
+                >
+                  提交举报
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
