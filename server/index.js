@@ -175,6 +175,7 @@ app.post('/api/films/import', upload.single('file'), (req, res) => {
   const errors = [];
   const success = [];
   const skipped = [];
+  const validRecords = [];
   const insertFilm = db.prepare(`
     INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -183,60 +184,77 @@ app.post('/api/films/import', upload.single('file'), (req, res) => {
     SELECT id FROM films WHERE title = ? AND (director = ? OR (? IS NULL AND director IS NULL)) AND (year = ? OR (? IS NULL AND year IS NULL))
   `);
 
-  const transaction = db.transaction((rows) => {
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowNum = i + 2;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNum = i + 2;
 
-      if (!row.title || !row.title.trim()) {
-        errors.push({ row: rowNum, data: row, message: '影片标题不能为空' });
-        continue;
-      }
+    if (!row.title || !row.title.trim()) {
+      errors.push({ row: rowNum, data: row, message: '影片标题不能为空' });
+      continue;
+    }
 
-      const title = row.title.trim();
-      const director = row.director ? row.director.trim() : null;
-      const year = row.year ? parseInt(row.year) : null;
-      const originalTitle = row.original_title ? row.original_title.trim() : null;
-      const country = row.country ? row.country.trim() : null;
-      const genre = row.genre ? row.genre.trim() : null;
-      const duration = row.duration ? parseInt(row.duration) : null;
-      const language = row.language ? row.language.trim() : null;
-      const synopsis = row.synopsis ? row.synopsis.trim() : null;
-      const poster = row.poster ? row.poster.trim() : null;
-      const rating = row.rating ? parseFloat(row.rating) : null;
+    const title = row.title.trim();
+    const director = row.director ? row.director.trim() : null;
+    const year = row.year ? parseInt(row.year) : null;
+    const originalTitle = row.original_title ? row.original_title.trim() : null;
+    const country = row.country ? row.country.trim() : null;
+    const genre = row.genre ? row.genre.trim() : null;
+    const duration = row.duration ? parseInt(row.duration) : null;
+    const language = row.language ? row.language.trim() : null;
+    const synopsis = row.synopsis ? row.synopsis.trim() : null;
+    const poster = row.poster ? row.poster.trim() : null;
+    const rating = row.rating ? parseFloat(row.rating) : null;
 
-      if (row.year && isNaN(parseInt(row.year))) {
-        errors.push({ row: rowNum, data: row, message: '年份格式不正确' });
-        continue;
-      }
-      if (row.duration && isNaN(parseInt(row.duration))) {
-        errors.push({ row: rowNum, data: row, message: '时长格式不正确，应为整数分钟' });
-        continue;
-      }
-      if (row.rating && (isNaN(parseFloat(row.rating)) || parseFloat(row.rating) < 0 || parseFloat(row.rating) > 10)) {
-        errors.push({ row: rowNum, data: row, message: '评分格式不正确，应为0-10的数字' });
-        continue;
-      }
+    if (row.year && isNaN(parseInt(row.year))) {
+      errors.push({ row: rowNum, data: row, message: '年份格式不正确' });
+      continue;
+    }
+    if (row.duration && isNaN(parseInt(row.duration))) {
+      errors.push({ row: rowNum, data: row, message: '时长格式不正确，应为整数分钟' });
+      continue;
+    }
+    if (row.rating && (isNaN(parseFloat(row.rating)) || parseFloat(row.rating) < 0 || parseFloat(row.rating) > 10)) {
+      errors.push({ row: rowNum, data: row, message: '评分格式不正确，应为0-10的数字' });
+      continue;
+    }
 
-      const existing = findDuplicate.get(title, director, director, year, year);
-      if (existing) {
-        skipped.push({ row: rowNum, data: row, message: `影片「${title}」已存在（导演：${director || '未知'}，年份：${year || '未知'}）`, existing_id: existing.id });
-        continue;
-      }
+    const existing = findDuplicate.get(title, director, director, year, year);
+    if (existing) {
+      skipped.push({ row: rowNum, data: row, message: `影片「${title}」已存在（导演：${director || '未知'}，年份：${year || '未知'}）`, existing_id: existing.id });
+      continue;
+    }
 
+    validRecords.push({ rowNum, title, originalTitle, director, year, country, genre, duration, language, synopsis, poster, rating });
+  }
+
+  if (errors.length > 0) {
+    return res.status(422).json({
+      error: `批量校验未通过，共 ${errors.length} 条错误。所有数据均未写入，请修正后重新导入`,
+      total: rows.length,
+      success_count: 0,
+      skipped_count: skipped.length,
+      error_count: errors.length,
+      success: [],
+      skipped,
+      errors
+    });
+  }
+
+  const transaction = db.transaction((records) => {
+    for (const r of records) {
       try {
-        const info = insertFilm.run(title, originalTitle, director, year, country, genre, duration, language, synopsis, poster, rating);
-        success.push({ row: rowNum, id: info.lastInsertRowid, title });
+        const info = insertFilm.run(r.title, r.originalTitle, r.director, r.year, r.country, r.genre, r.duration, r.language, r.synopsis, r.poster, r.rating);
+        success.push({ row: r.rowNum, id: info.lastInsertRowid, title: r.title });
       } catch (err) {
-        errors.push({ row: rowNum, data: row, message: `数据库写入失败：${err.message}` });
+        throw new Error(`第${r.rowNum}行写入失败：${err.message}`);
       }
     }
   });
 
   try {
-    transaction(rows);
+    transaction(validRecords);
   } catch (err) {
-    return res.status(500).json({ error: '导入过程中发生错误', detail: err.message });
+    return res.status(500).json({ error: '事务写入失败，所有数据已回滚', detail: err.message });
   }
 
   res.json({
@@ -743,6 +761,7 @@ app.post('/api/screenings/import', upload.single('file'), (req, res) => {
   const errors = [];
   const success = [];
   const skipped = [];
+  const validRecords = [];
   const findFilmByTitle = db.prepare('SELECT id, duration, title FROM films WHERE title = ? COLLATE NOCASE');
   const findVenueByName = db.prepare('SELECT id, name, location FROM venues WHERE name = ? COLLATE NOCASE AND is_active = 1');
   const findDuplicateScreening = db.prepare(`
@@ -757,92 +776,115 @@ app.post('/api/screenings/import', upload.single('file'), (req, res) => {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
-  const transaction = db.transaction((rows) => {
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      const rowNum = i + 2;
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const rowNum = i + 2;
 
-      if (!row.film_title || !row.film_title.trim()) {
-        errors.push({ row: rowNum, data: row, message: '影片标题(film_title)不能为空' });
-        continue;
+    if (!row.film_title || !row.film_title.trim()) {
+      errors.push({ row: rowNum, data: row, message: '影片标题(film_title)不能为空' });
+      continue;
+    }
+    if (!row.screening_date || !row.screening_date.trim()) {
+      errors.push({ row: rowNum, data: row, message: '放映日期(screening_date)不能为空' });
+      continue;
+    }
+    if (!row.screening_time || !row.screening_time.trim()) {
+      errors.push({ row: rowNum, data: row, message: '放映时间(screening_time)不能为空' });
+      continue;
+    }
+
+    const filmTitle = row.film_title.trim();
+    const screeningDate = row.screening_date.trim();
+    const screeningTime = row.screening_time.trim();
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(screeningDate)) {
+      errors.push({ row: rowNum, data: row, message: `日期格式不正确「${screeningDate}」，应为 YYYY-MM-DD` });
+      continue;
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(screeningTime)) {
+      errors.push({ row: rowNum, data: row, message: `时间格式不正确「${screeningTime}」，应为 HH:MM` });
+      continue;
+    }
+
+    const film = findFilmByTitle.get(filmTitle);
+    if (!film) {
+      errors.push({ row: rowNum, data: row, message: `影片「${filmTitle}」在数据库中不存在，请先导入影片` });
+      continue;
+    }
+
+    const venueName = row.venue_name ? row.venue_name.trim() : '';
+    let venueId = null;
+    let finalVenue = venueName;
+    let finalLocation = row.location ? row.location.trim() : null;
+
+    if (venueName) {
+      const venue = findVenueByName.get(venueName);
+      if (venue) {
+        venueId = venue.id;
+        finalVenue = venue.name;
+        finalLocation = venue.location || finalLocation;
       }
-      if (!row.screening_date || !row.screening_date.trim()) {
-        errors.push({ row: rowNum, data: row, message: '放映日期(screening_date)不能为空' });
-        continue;
-      }
-      if (!row.screening_time || !row.screening_time.trim()) {
-        errors.push({ row: rowNum, data: row, message: '放映时间(screening_time)不能为空' });
-        continue;
-      }
+    }
 
-      const filmTitle = row.film_title.trim();
-      const screeningDate = row.screening_date.trim();
-      const screeningTime = row.screening_time.trim();
+    const ticketStatus = row.ticket_status ? row.ticket_status.trim() : 'not_open';
+    if (ticketStatus && !VALID_TICKET_STATUSES.includes(ticketStatus)) {
+      errors.push({ row: rowNum, data: row, message: `票务状态「${ticketStatus}」不合法，应为：${VALID_TICKET_STATUSES.join('/')}` });
+      continue;
+    }
 
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(screeningDate)) {
-        errors.push({ row: rowNum, data: row, message: `日期格式不正确「${screeningDate}」，应为 YYYY-MM-DD` });
-        continue;
-      }
-      if (!/^\d{1,2}:\d{2}$/.test(screeningTime)) {
-        errors.push({ row: rowNum, data: row, message: `时间格式不正确「${screeningTime}」，应为 HH:MM` });
-        continue;
-      }
+    const isChanged = row.is_changed === '1' ? 1 : 0;
 
-      const film = findFilmByTitle.get(filmTitle);
-      if (!film) {
-        errors.push({ row: rowNum, data: row, message: `影片「${filmTitle}」在数据库中不存在，请先导入影片` });
-        continue;
-      }
+    const existing = findDuplicateScreening.get(filmTitle, screeningDate, screeningTime, venueName, venueName);
+    if (existing) {
+      skipped.push({ row: rowNum, data: row, message: `放映已存在：${filmTitle} ${screeningDate} ${screeningTime}${venueName ? ' @ ' + venueName : ''}`, existing_id: existing.id });
+      continue;
+    }
 
-      const venueName = row.venue_name ? row.venue_name.trim() : '';
-      let venueId = null;
-      let finalVenue = venueName;
-      let finalLocation = row.location ? row.location.trim() : null;
+    validRecords.push({
+      rowNum, filmId: film.id, venueId, screeningDate, screeningTime,
+      finalVenue, finalLocation,
+      notes: row.notes ? row.notes.trim() : null,
+      ticketStatus,
+      ticketOpenDate: row.ticket_open_date ? row.ticket_open_date.trim() : null,
+      isChanged,
+      changeDescription: row.change_description ? row.change_description.trim() : null,
+      filmTitle
+    });
+  }
 
-      if (venueName) {
-        const venue = findVenueByName.get(venueName);
-        if (venue) {
-          venueId = venue.id;
-          finalVenue = venue.name;
-          finalLocation = venue.location || finalLocation;
-        }
-      }
+  if (errors.length > 0) {
+    return res.status(422).json({
+      error: `批量校验未通过，共 ${errors.length} 条错误。所有数据均未写入，请修正后重新导入`,
+      total: rows.length,
+      success_count: 0,
+      skipped_count: skipped.length,
+      error_count: errors.length,
+      success: [],
+      skipped,
+      errors
+    });
+  }
 
-      const ticketStatus = row.ticket_status ? row.ticket_status.trim() : 'not_open';
-      if (ticketStatus && !VALID_TICKET_STATUSES.includes(ticketStatus)) {
-        errors.push({ row: rowNum, data: row, message: `票务状态「${ticketStatus}」不合法，应为：${VALID_TICKET_STATUSES.join('/')}` });
-        continue;
-      }
-
-      const isChanged = row.is_changed === '1' ? 1 : 0;
-
-      const existing = findDuplicateScreening.get(filmTitle, screeningDate, screeningTime, venueName, venueName);
-      if (existing) {
-        skipped.push({ row: rowNum, data: row, message: `放映已存在：${filmTitle} ${screeningDate} ${screeningTime}${venueName ? ' @ ' + venueName : ''}`, existing_id: existing.id });
-        continue;
-      }
-
+  const transaction = db.transaction((records) => {
+    for (const r of records) {
       try {
         const info = insertScreening.run(
-          film.id, venueId, screeningDate, screeningTime,
-          finalVenue || null, finalLocation || null,
-          row.notes ? row.notes.trim() : null,
-          ticketStatus,
-          row.ticket_open_date ? row.ticket_open_date.trim() : null,
-          isChanged,
-          row.change_description ? row.change_description.trim() : null
+          r.filmId, r.venueId, r.screeningDate, r.screeningTime,
+          r.finalVenue || null, r.finalLocation || null,
+          r.notes, r.ticketStatus, r.ticketOpenDate,
+          r.isChanged, r.changeDescription
         );
-        success.push({ row: rowNum, id: info.lastInsertRowid, film_title: filmTitle, screening_date: screeningDate, screening_time: screeningTime });
+        success.push({ row: r.rowNum, id: info.lastInsertRowid, film_title: r.filmTitle, screening_date: r.screeningDate, screening_time: r.screeningTime });
       } catch (err) {
-        errors.push({ row: rowNum, data: row, message: `数据库写入失败：${err.message}` });
+        throw new Error(`第${r.rowNum}行写入失败：${err.message}`);
       }
     }
   });
 
   try {
-    transaction(rows);
+    transaction(validRecords);
   } catch (err) {
-    return res.status(500).json({ error: '导入过程中发生错误', detail: err.message });
+    return res.status(500).json({ error: '事务写入失败，所有数据已回滚', detail: err.message });
   }
 
   res.json({
