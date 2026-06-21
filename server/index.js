@@ -3,7 +3,7 @@ const cors = require('cors');
 const db = require('./database');
 
 const app = express();
-const PORT = 5001;
+const PORT = Number(process.env.PORT || 5001);
 
 app.use(cors());
 app.use(express.json());
@@ -62,7 +62,14 @@ app.get('/api/films/:id', (req, res) => {
   const screenings = db.prepare('SELECT * FROM screenings WHERE film_id = ? ORDER BY screening_date, screening_time').all(req.params.id);
   const favorite = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.id);
 
-  res.json({ ...film, reviews, screenings, isFavorite: !!favorite });
+  res.json({
+    ...film,
+    reviews,
+    screenings,
+    isFavorite: !!favorite,
+    ticketReminderEnabled: favorite ? !!favorite.ticket_reminder_enabled : false,
+    scheduleChangeReminderEnabled: favorite ? !!favorite.schedule_change_reminder_enabled : false
+  });
 });
 
 app.post('/api/films', (req, res) => {
@@ -146,15 +153,15 @@ app.get('/api/screenings', (req, res) => {
 });
 
 app.post('/api/screenings', (req, res) => {
-  const { film_id, screening_date, screening_time, venue, location, notes } = req.body;
+  const { film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description } = req.body;
   if (!film_id || !screening_date || !screening_time) {
     return res.status(400).json({ error: '影片、日期和时间不能为空' });
   }
 
   const info = db.prepare(`
-    INSERT INTO screenings (film_id, screening_date, screening_time, venue, location, notes)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(film_id, screening_date, screening_time, venue || null, location || null, notes || null);
+    INSERT INTO screenings (film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(film_id, screening_date, screening_time, venue || null, location || null, notes || null, ticket_status || 'not_open', ticket_open_date || null, is_changed || 0, change_description || null);
 
   const screening = db.prepare(`
     SELECT s.*, f.title, f.director, f.year, f.poster
@@ -162,7 +169,77 @@ app.post('/api/screenings', (req, res) => {
     WHERE s.id = ?
   `).get(info.lastInsertRowid);
 
+  if (is_changed) {
+    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND schedule_change_reminder_enabled = 1').all(film_id);
+    const insertNotif = db.prepare('INSERT INTO notifications (film_id, screening_id, type, title, content) VALUES (?, ?, ?, ?, ?)');
+    favsWithReminder.forEach(f => {
+      insertNotif.run(film_id, info.lastInsertRowid, 'schedule_change', `《${screening.title}》放映变更`, change_description || '放映信息有变更，请留意');
+    });
+  }
+  if (ticket_status === 'on_sale') {
+    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND ticket_reminder_enabled = 1').all(film_id);
+    const insertNotif = db.prepare('INSERT INTO notifications (film_id, screening_id, type, title, content) VALUES (?, ?, ?, ?, ?)');
+    favsWithReminder.forEach(f => {
+      insertNotif.run(film_id, info.lastInsertRowid, 'ticket_on_sale', `《${screening.title}》已开票`, `${screening_date} ${screening_time} 场次现已开放购票`);
+    });
+  }
+
   res.status(201).json(screening);
+});
+
+app.put('/api/screenings/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM screenings WHERE id = ?').get(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: '放映信息不存在' });
+  }
+
+  const { film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description } = req.body;
+  const oldStatus = existing.ticket_status;
+  const newStatus = ticket_status || existing.ticket_status;
+
+  db.prepare(`
+    UPDATE screenings SET 
+      film_id = ?, screening_date = ?, screening_time = ?, venue = ?, location = ?, notes = ?,
+      ticket_status = ?, ticket_open_date = ?, is_changed = ?, change_description = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    film_id || existing.film_id,
+    screening_date || existing.screening_date,
+    screening_time || existing.screening_time,
+    venue !== undefined ? venue : existing.venue,
+    location !== undefined ? location : existing.location,
+    notes !== undefined ? notes : existing.notes,
+    ticket_status || existing.ticket_status,
+    ticket_open_date !== undefined ? ticket_open_date : existing.ticket_open_date,
+    is_changed !== undefined ? is_changed : existing.is_changed,
+    change_description !== undefined ? change_description : existing.change_description,
+    req.params.id
+  );
+
+  const film = db.prepare('SELECT title FROM films WHERE id = ?').get(film_id || existing.film_id);
+
+  if (oldStatus !== 'on_sale' && newStatus === 'on_sale') {
+    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND ticket_reminder_enabled = 1').all(film_id || existing.film_id);
+    const insertNotif = db.prepare('INSERT INTO notifications (film_id, screening_id, type, title, content) VALUES (?, ?, ?, ?, ?)');
+    favsWithReminder.forEach(f => {
+      insertNotif.run(film_id || existing.film_id, req.params.id, 'ticket_on_sale', `《${film?.title || '影片'}》已开票`, `${screening_date || existing.screening_date} ${screening_time || existing.screening_time} 场次现已开放购票`);
+    });
+  }
+  if (is_changed) {
+    const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND schedule_change_reminder_enabled = 1').all(film_id || existing.film_id);
+    const insertNotif = db.prepare('INSERT INTO notifications (film_id, screening_id, type, title, content) VALUES (?, ?, ?, ?, ?)');
+    favsWithReminder.forEach(f => {
+      insertNotif.run(film_id || existing.film_id, req.params.id, 'schedule_change', `《${film?.title || '影片'}》放映变更`, change_description || '放映信息有变更，请留意');
+    });
+  }
+
+  const screening = db.prepare(`
+    SELECT s.*, f.title, f.director, f.year, f.poster
+    FROM screenings s LEFT JOIN films f ON s.film_id = f.id
+    WHERE s.id = ?
+  `).get(req.params.id);
+  res.json(screening);
 });
 
 app.delete('/api/screenings/:id', (req, res) => {
@@ -231,13 +308,41 @@ app.post('/api/favorites/:filmId', (req, res) => {
     return res.status(404).json({ error: '影片不存在' });
   }
 
-  try {
-    db.prepare('INSERT INTO favorites (film_id) VALUES (?)').run(req.params.filmId);
-    res.status(201).json({ message: '已添加到收藏夹', isFavorite: true });
-  } catch (err) {
+  const existing = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.filmId);
+  if (existing) {
     db.prepare('DELETE FROM favorites WHERE film_id = ?').run(req.params.filmId);
     res.json({ message: '已从收藏夹移除', isFavorite: false });
+  } else {
+    const { ticket_reminder_enabled = 1, schedule_change_reminder_enabled = 1 } = req.body;
+    db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(req.params.filmId, ticket_reminder_enabled ? 1 : 0, schedule_change_reminder_enabled ? 1 : 0);
+    res.status(201).json({ message: '已添加到收藏夹', isFavorite: true, ticket_reminder_enabled: !!ticket_reminder_enabled, schedule_change_reminder_enabled: !!schedule_change_reminder_enabled });
   }
+});
+
+app.put('/api/favorites/:filmId/reminders', (req, res) => {
+  const existing = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.filmId);
+  if (!existing) {
+    return res.status(404).json({ error: '未收藏此影片' });
+  }
+
+  const { ticket_reminder_enabled, schedule_change_reminder_enabled } = req.body;
+  db.prepare(`
+    UPDATE favorites SET
+      ticket_reminder_enabled = ?,
+      schedule_change_reminder_enabled = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE film_id = ?
+  `).run(
+    ticket_reminder_enabled !== undefined ? (ticket_reminder_enabled ? 1 : 0) : existing.ticket_reminder_enabled,
+    schedule_change_reminder_enabled !== undefined ? (schedule_change_reminder_enabled ? 1 : 0) : existing.schedule_change_reminder_enabled,
+    req.params.filmId
+  );
+
+  const updated = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.filmId);
+  res.json({
+    ticket_reminder_enabled: !!updated.ticket_reminder_enabled,
+    schedule_change_reminder_enabled: !!updated.schedule_change_reminder_enabled
+  });
 });
 
 app.delete('/api/favorites/:filmId', (req, res) => {
@@ -248,6 +353,45 @@ app.delete('/api/favorites/:filmId', (req, res) => {
   res.json({ message: '已从收藏夹移除' });
 });
 
+// ============ 通知 API ============
+
+app.get('/api/notifications', (req, res) => {
+  const { unread_only } = req.query;
+  let sql = `
+    SELECT n.*, f.title, f.poster
+    FROM notifications n
+    LEFT JOIN films f ON n.film_id = f.id
+  `;
+  const params = [];
+  if (unread_only) {
+    sql += ' WHERE n.is_read = 0';
+  }
+  sql += ' ORDER BY n.created_at DESC';
+  const notifications = db.prepare(sql).all(...params);
+  res.json(notifications);
+});
+
+app.put('/api/notifications/:id/read', (req, res) => {
+  const info = db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(req.params.id);
+  if (info.changes === 0) {
+    return res.status(404).json({ error: '通知不存在' });
+  }
+  res.json({ message: '已标记为已读' });
+});
+
+app.put('/api/notifications/read-all', (req, res) => {
+  db.prepare('UPDATE notifications SET is_read = 1 WHERE is_read = 0').run();
+  res.json({ message: '已全部标记为已读' });
+});
+
+app.delete('/api/notifications/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM notifications WHERE id = ?').run(req.params.id);
+  if (info.changes === 0) {
+    return res.status(404).json({ error: '通知不存在' });
+  }
+  res.json({ message: '已删除通知' });
+});
+
 // ============ 统计数据 API ============
 
 app.get('/api/stats', (req, res) => {
@@ -255,6 +399,7 @@ app.get('/api/stats', (req, res) => {
   const screeningCount = db.prepare('SELECT COUNT(*) as count FROM screenings').get().count;
   const reviewCount = db.prepare('SELECT COUNT(*) as count FROM reviews').get().count;
   const favoriteCount = db.prepare('SELECT COUNT(*) as count FROM favorites').get().count;
+  const unreadNotificationCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE is_read = 0').get().count;
 
   const upcomingScreenings = db.prepare(`
     SELECT s.*, f.title, f.poster
@@ -271,13 +416,22 @@ app.get('/api/stats', (req, res) => {
     LIMIT 5
   `).all();
 
+  const recentNotifications = db.prepare(`
+    SELECT n.*, f.title, f.poster
+    FROM notifications n LEFT JOIN films f ON n.film_id = f.id
+    ORDER BY n.created_at DESC
+    LIMIT 5
+  `).all();
+
   res.json({
     filmCount,
     screeningCount,
     reviewCount,
     favoriteCount,
+    unreadNotificationCount,
     upcomingScreenings,
-    recentReviews
+    recentReviews,
+    recentNotifications
   });
 });
 

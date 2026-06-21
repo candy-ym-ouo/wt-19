@@ -10,7 +10,8 @@ export default function Calendar() {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAdd, setShowAdd] = useState(false);
   const [addForm, setAddForm] = useState({
-    film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: ''
+    film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
+    ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
   });
 
   const fetchData = () => {
@@ -56,9 +57,15 @@ export default function Calendar() {
       return;
     }
     try {
-      await screeningsApi.create(addForm);
+      await screeningsApi.create({
+        ...addForm,
+        is_changed: addForm.is_changed ? 1 : 0
+      });
       setShowAdd(false);
-      setAddForm({ film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '' });
+      setAddForm({
+        film_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
+        ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
+      });
       fetchData();
     } catch (err) {
       alert(err.message);
@@ -169,7 +176,7 @@ export default function Calendar() {
                 className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
               />
             </div>
-            <div className="md:col-span-2">
+            <div>
               <label className="text-xs text-film-cream/60 mb-1.5 block">备注</label>
               <input
                 type="text"
@@ -177,6 +184,49 @@ export default function Calendar() {
                 onChange={(e) => setAddForm({ ...addForm, notes: e.target.value })}
                 placeholder="如 4K修复版、导演映后谈等"
                 className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+              />
+            </div>
+            <div>
+              <label className="text-xs text-film-cream/60 mb-1.5 block">开票状态</label>
+              <select
+                value={addForm.ticket_status}
+                onChange={(e) => setAddForm({ ...addForm, ticket_status: e.target.value })}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+              >
+                <option value="not_open">尚未开票</option>
+                <option value="on_sale">正在售票</option>
+                <option value="sold_out">已售罄</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-film-cream/60 mb-1.5 block">预计开票日期</label>
+              <input
+                type="date"
+                value={addForm.ticket_open_date}
+                onChange={(e) => setAddForm({ ...addForm, ticket_open_date: e.target.value })}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+              />
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!addForm.is_changed}
+                  onChange={(e) => setAddForm({ ...addForm, is_changed: e.target.checked ? 1 : 0 })}
+                  className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
+                />
+                <span className="text-sm text-film-cream/80">标记为场次变更</span>
+              </label>
+            </div>
+            <div className="md:col-span-2">
+              <label className="text-xs text-film-cream/60 mb-1.5 block">变更说明</label>
+              <input
+                type="text"
+                value={addForm.change_description}
+                onChange={(e) => setAddForm({ ...addForm, change_description: e.target.value })}
+                placeholder="如 时间由15:00调整为14:00"
+                disabled={!addForm.is_changed}
+                className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none disabled:opacity-50"
               />
             </div>
             <div className="md:col-span-3 flex justify-end gap-3">
@@ -239,16 +289,22 @@ export default function Calendar() {
                       {cell.day}
                     </div>
                     <div className="space-y-1">
-                      {cell.items.slice(0, 2).map(s => (
-                        <Link
-                          key={s.id}
-                          to={`/films/${s.film_id}`}
-                          className="block text-[10px] md:text-xs bg-film-gold/15 text-film-gold px-1.5 py-0.5 rounded truncate hover:bg-film-gold/25 transition-colors"
-                          title={`${s.screening_time} ${s.title}`}
-                        >
-                          <span className="font-mono">{s.screening_time}</span> {s.title}
-                        </Link>
-                      ))}
+                      {cell.items.slice(0, 2).map(s => {
+                        let bgClass = 'bg-film-gold/15 text-film-gold';
+                        if (s.ticket_status === 'on_sale') bgClass = 'bg-green-500/15 text-green-400';
+                        if (s.ticket_status === 'sold_out') bgClass = 'bg-red-500/15 text-red-400';
+                        return (
+                          <Link
+                            key={s.id}
+                            to={`/films/${s.film_id}`}
+                            className={`block text-[10px] md:text-xs px-1.5 py-0.5 rounded truncate hover:opacity-80 transition-opacity ${bgClass} ${s.is_changed ? 'ring-1 ring-orange-400/50' : ''}`}
+                            title={`${s.screening_time} ${s.title}${s.is_changed ? ' · 场次变更' : ''}`}
+                          >
+                            <span className="font-mono">{s.screening_time}</span> {s.title}
+                            {s.is_changed && <span className="ml-0.5">⚠</span>}
+                          </Link>
+                        );
+                      })}
                       {cell.items.length > 2 && (
                         <div className="text-[10px] text-film-cream/40">+{cell.items.length - 2} 场</div>
                       )}
@@ -295,9 +351,29 @@ export default function Calendar() {
                           {s.location && <span>📍 {s.location}</span>}
                         </div>
                       </div>
-                      {s.notes && (
-                        <span className="text-xs bg-film-gold/10 text-film-gold px-3 py-1 rounded-full">{s.notes}</span>
-                      )}
+                      <div className="flex flex-wrap gap-2">
+                        {s.ticket_status === 'on_sale' && (
+                          <span className="bg-green-500/15 text-green-400 px-2.5 py-0.5 rounded-full text-xs flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span> 正在售票
+                          </span>
+                        )}
+                        {s.ticket_status === 'not_open' && (
+                          <span className="bg-film-gray/50 text-film-cream/60 px-2.5 py-0.5 rounded-full text-xs">
+                            {s.ticket_open_date ? `${s.ticket_open_date} 开票` : '尚未开票'}
+                          </span>
+                        )}
+                        {s.ticket_status === 'sold_out' && (
+                          <span className="bg-red-500/15 text-red-400 px-2.5 py-0.5 rounded-full text-xs">已售罄</span>
+                        )}
+                        {s.is_changed && (
+                          <span className="bg-orange-500/15 text-orange-400 px-2.5 py-0.5 rounded-full text-xs flex items-center gap-1" title={s.change_description}>
+                            ⚠ 场次变更
+                          </span>
+                        )}
+                        {s.notes && (
+                          <span className="text-xs bg-film-gold/10 text-film-gold px-3 py-1 rounded-full">{s.notes}</span>
+                        )}
+                      </div>
                       <button
                         onClick={() => handleDelete(s.id)}
                         className="p-2 text-film-cream/30 hover:text-film-red hover:bg-film-red/10 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
@@ -308,6 +384,11 @@ export default function Calendar() {
                         </svg>
                       </button>
                     </div>
+                    {s.is_changed && s.change_description && (
+                      <div className="mt-2 ml-[84px] text-xs text-orange-400/80 bg-orange-500/5 rounded px-2 py-1">
+                        ℹ {s.change_description}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>

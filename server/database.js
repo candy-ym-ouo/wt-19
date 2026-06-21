@@ -32,7 +32,12 @@ db.exec(`
     venue TEXT,
     location TEXT,
     notes TEXT,
+    ticket_status TEXT DEFAULT 'not_open',
+    ticket_open_date TEXT,
+    is_changed INTEGER DEFAULT 0,
+    change_description TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE
   );
 
@@ -51,10 +56,47 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS favorites (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     film_id INTEGER NOT NULL UNIQUE,
+    ticket_reminder_enabled INTEGER DEFAULT 0,
+    schedule_change_reminder_enabled INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    film_id INTEGER NOT NULL,
+    screening_id INTEGER,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    is_read INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
+    FOREIGN KEY (screening_id) REFERENCES screenings(id) ON DELETE SET NULL
+  );
 `);
+
+const columns = db.prepare("PRAGMA table_info(screenings)").all();
+const colNames = columns.map(c => c.name);
+if (!colNames.includes('ticket_status')) {
+  db.exec(`
+    ALTER TABLE screenings ADD COLUMN ticket_status TEXT DEFAULT 'not_open';
+    ALTER TABLE screenings ADD COLUMN ticket_open_date TEXT;
+    ALTER TABLE screenings ADD COLUMN is_changed INTEGER DEFAULT 0;
+    ALTER TABLE screenings ADD COLUMN change_description TEXT;
+    ALTER TABLE screenings ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;
+  `);
+}
+const favColumns = db.prepare("PRAGMA table_info(favorites)").all();
+const favColNames = favColumns.map(c => c.name);
+if (!favColNames.includes('ticket_reminder_enabled')) {
+  db.exec(`
+    ALTER TABLE favorites ADD COLUMN ticket_reminder_enabled INTEGER DEFAULT 0;
+    ALTER TABLE favorites ADD COLUMN schedule_change_reminder_enabled INTEGER DEFAULT 0;
+    ALTER TABLE favorites ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;
+  `);
+}
 
 const filmCount = db.prepare('SELECT COUNT(*) as count FROM films').get().count;
 if (filmCount === 0) {
@@ -64,8 +106,8 @@ if (filmCount === 0) {
   `);
 
   const insertScreening = db.prepare(`
-    INSERT INTO screenings (film_id, screening_date, screening_time, venue, location, notes)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO screenings (film_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertReview = db.prepare(`
@@ -164,17 +206,17 @@ if (filmCount === 0) {
   });
 
   const screenings = [
-    { filmIndex: 0, date: '2026-06-25', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '4K修复版' },
-    { filmIndex: 1, date: '2026-06-26', time: '20:00', venue: '百老汇电影中心', location: '北京·东直门', notes: '' },
-    { filmIndex: 2, date: '2026-06-28', time: '14:00', venue: '上海电影博物馆', location: '上海·徐汇', notes: '特吕弗回顾展' },
-    { filmIndex: 3, date: '2026-06-30', time: '18:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '小津安二郎专题' },
-    { filmIndex: 4, date: '2026-07-02', time: '19:00', venue: 'UCCA尤伦斯当代艺术中心', location: '北京·798', notes: '' },
-    { filmIndex: 0, date: '2026-07-05', time: '15:30', venue: '苏州艺术影院', location: '苏州·工业园区', notes: '' },
-    { filmIndex: 5, date: '2026-07-08', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '塔可夫斯基纪念展' }
+    { filmIndex: 0, date: '2026-06-25', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '4K修复版', ticket_status: 'on_sale', ticket_open_date: '2026-06-20', is_changed: 0, change_description: '' },
+    { filmIndex: 1, date: '2026-06-26', time: '20:00', venue: '百老汇电影中心', location: '北京·东直门', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-06-23', is_changed: 0, change_description: '' },
+    { filmIndex: 2, date: '2026-06-28', time: '14:00', venue: '上海电影博物馆', location: '上海·徐汇', notes: '特吕弗回顾展', ticket_status: 'on_sale', ticket_open_date: '2026-06-18', is_changed: 1, change_description: '时间由15:00调整为14:00' },
+    { filmIndex: 3, date: '2026-06-30', time: '18:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '小津安二郎专题', ticket_status: 'sold_out', ticket_open_date: '2026-06-15', is_changed: 0, change_description: '' },
+    { filmIndex: 4, date: '2026-07-02', time: '19:00', venue: 'UCCA尤伦斯当代艺术中心', location: '北京·798', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-06-28', is_changed: 0, change_description: '' },
+    { filmIndex: 0, date: '2026-07-05', time: '15:30', venue: '苏州艺术影院', location: '苏州·工业园区', notes: '', ticket_status: 'not_open', ticket_open_date: '2026-07-01', is_changed: 0, change_description: '' },
+    { filmIndex: 5, date: '2026-07-08', time: '19:30', venue: '中国电影资料馆', location: '北京·小西天', notes: '塔可夫斯基纪念展', ticket_status: 'on_sale', ticket_open_date: '2026-06-22', is_changed: 0, change_description: '' }
   ];
 
   screenings.forEach(s => {
-    insertScreening.run(filmIds[s.filmIndex], s.date, s.time, s.venue, s.location, s.notes);
+    insertScreening.run(filmIds[s.filmIndex], s.date, s.time, s.venue, s.location, s.notes, s.ticket_status, s.ticket_open_date, s.is_changed, s.change_description);
   });
 
   const reviews = [
@@ -188,8 +230,15 @@ if (filmCount === 0) {
     insertReview.run(filmIds[r.filmIndex], r.author, r.content, r.rating, r.mood, r.watchedDate);
   });
 
-  db.prepare('INSERT INTO favorites (film_id) VALUES (?)').run(filmIds[0]);
-  db.prepare('INSERT INTO favorites (film_id) VALUES (?)').run(filmIds[3]);
+  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(filmIds[0], 1, 1);
+  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(filmIds[3], 1, 0);
+
+  const insertNotification = db.prepare(`
+    INSERT INTO notifications (film_id, screening_id, type, title, content)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+  insertNotification.run(filmIds[0], null, 'ticket_on_sale', '《花样年华》已开票', '4K修复版放映场次现已开放购票');
+  insertNotification.run(filmIds[2], null, 'schedule_change', '《四百击》放映时间变更', '时间由15:00调整为14:00，请留意');
 
   console.log('✅ 示例数据已初始化');
 }

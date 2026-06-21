@@ -29,6 +29,7 @@ export const screenings = {
     return request(`/screenings${qs ? '?' + qs : ''}`);
   },
   create: (data) => request('/screenings', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => request(`/screenings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id) => request(`/screenings/${id}`, { method: 'DELETE' }),
 };
 
@@ -40,8 +41,19 @@ export const reviews = {
 
 export const favorites = {
   list: () => request('/favorites'),
-  toggle: (filmId) => request(`/favorites/${filmId}`, { method: 'POST' }),
+  toggle: (filmId, data = {}) => request(`/favorites/${filmId}`, { method: 'POST', body: JSON.stringify(data) }),
+  updateReminders: (filmId, data) => request(`/favorites/${filmId}/reminders`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (filmId) => request(`/favorites/${filmId}`, { method: 'DELETE' }),
+};
+
+export const notifications = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/notifications${qs ? '?' + qs : ''}`);
+  },
+  markRead: (id) => request(`/notifications/${id}/read`, { method: 'PUT' }),
+  markAllRead: () => request('/notifications/read-all', { method: 'PUT' }),
+  delete: (id) => request(`/notifications/${id}`, { method: 'DELETE' }),
 };
 
 export const stats = {

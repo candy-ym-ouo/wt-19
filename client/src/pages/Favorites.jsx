@@ -55,12 +55,25 @@ export default function Favorites() {
       ) : (
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-5">
           {list.map(item => (
-            <FilmCard
-              key={item.id}
-              film={item}
-              isFavorite={true}
-              onToggleFavorite={handleToggleFavorite}
-            />
+            <div key={item.id} className="relative">
+              <FilmCard
+                film={item}
+                isFavorite={true}
+                onToggleFavorite={handleToggleFavorite}
+              />
+              <div className="absolute bottom-[72px] left-3 flex gap-1 z-10">
+                {item.ticket_reminder_enabled && (
+                  <span className="bg-film-gold/20 backdrop-blur-sm text-film-gold px-1.5 py-0.5 rounded text-[10px] flex items-center gap-0.5" title="开票提醒已开启">
+                    🎟️
+                  </span>
+                )}
+                {item.schedule_change_reminder_enabled && (
+                  <span className="bg-orange-500/20 backdrop-blur-sm text-orange-400 px-1.5 py-0.5 rounded text-[10px] flex items-center gap-0.5" title="放映变更通知已开启">
+                    📅
+                  </span>
+                )}
+              </div>
+            </div>
           ))}
         </div>
       )}
