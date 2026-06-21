@@ -585,7 +585,7 @@ app.delete('/api/venues/:id', (req, res) => {
 app.get('/api/screenings', (req, res) => {
   const { date_from, date_to, venue_id, search, ticket_status, film_id } = req.query;
   let sql = `
-    SELECT s.*, f.title, f.director, f.year, f.poster, f.genre, v.name as venue_name, v.location as venue_location, v.capacity as venue_capacity
+    SELECT s.*, f.title, f.director, f.year, f.poster, f.genre, f.duration as film_duration, v.name as venue_name, v.location as venue_location, v.capacity as venue_capacity
     FROM screenings s
     LEFT JOIN films f ON s.film_id = f.id
     LEFT JOIN venues v ON s.venue_id = v.id
@@ -622,7 +622,41 @@ app.get('/api/screenings', (req, res) => {
   sql += ' ORDER BY s.screening_date, s.screening_time';
 
   const screenings = db.prepare(sql).all(...params);
-  res.json(screenings);
+
+  const allReviews = db.prepare('SELECT film_id, mood, content, created_at FROM reviews WHERE is_hidden = 0 ORDER BY created_at DESC').all();
+  const reviewMap = new Map();
+  allReviews.forEach(r => {
+    if (!reviewMap.has(r.film_id)) {
+      reviewMap.set(r.film_id, r);
+    }
+  });
+
+  const result = screenings.map(s => {
+    const ended = isScreeningEnded(s.screening_date, s.screening_time, s.film_duration);
+    const review = reviewMap.get(s.film_id);
+    const hasReview = !!review;
+    const hasMood = !!(review && review.mood);
+    const hasShortReview = hasReview && review.content && review.content.trim().length >= 10;
+    const pendingTasks = [];
+    if (ended && !hasShortReview) pendingTasks.push('review');
+    if (ended && !hasMood) pendingTasks.push('mood');
+
+    const endMinutes = timeToMinutes(s.screening_time) + (Number(s.film_duration) || 120);
+    const daysSinceEnded = ended ? Math.max(0, Math.floor((Date.now() - new Date(`${s.screening_date}T${minutesToTime(endMinutes)}:00`).getTime()) / (24 * 60 * 60 * 1000))) : 0;
+
+    return {
+      ...s,
+      is_ended: ended,
+      end_time: minutesToTime(endMinutes),
+      watch_pending_tasks: pendingTasks,
+      watch_has_review: hasShortReview,
+      watch_has_mood: hasMood,
+      watch_days_since_ended: daysSinceEnded,
+      watch_urgency: !ended ? null : (daysSinceEnded >= 7 ? 'high' : daysSinceEnded >= 3 ? 'medium' : 'low'),
+    };
+  });
+
+  res.json(result);
 });
 
 app.post('/api/screenings', (req, res) => {
@@ -1652,6 +1686,190 @@ app.get('/api/search', (req, res) => {
   res.json(result);
 });
 
+// ============ 补观任务 API ============
+
+function isScreeningEnded(screeningDate, screeningTime, filmDuration) {
+  const now = new Date();
+  const [h, m] = String(screeningTime || '00:00').split(':').map(Number);
+  const duration = Number(filmDuration) || 120;
+  const endDate = new Date(`${screeningDate}T00:00:00`);
+  endDate.setHours(h || 0, (m || 0) + duration, 0, 0);
+  return now > endDate;
+}
+
+app.get('/api/watch-tasks', (req, res) => {
+  const { status = 'pending', film_id } = req.query;
+
+  const screeningsSql = `
+    SELECT s.*, f.title, f.poster, f.director, f.year, f.duration as film_duration,
+           v.name as venue_name, v.location as venue_location
+    FROM screenings s
+    LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
+    WHERE 1=1
+  `;
+  const params = [];
+  if (film_id) {
+    screeningsSql += ' AND s.film_id = ?';
+    params.push(film_id);
+  }
+  const screenings = db.prepare(screeningsSql).all(...params);
+
+  const allFavs = db.prepare('SELECT * FROM favorites').all();
+  const favMap = new Map();
+  allFavs.forEach(f => favMap.set(f.film_id, f));
+
+  const allReviews = db.prepare('SELECT * FROM reviews WHERE is_hidden = 0 ORDER BY created_at DESC').all();
+  const reviewMap = new Map();
+  allReviews.forEach(r => {
+    if (!reviewMap.has(r.film_id)) {
+      reviewMap.set(r.film_id, r);
+    }
+  });
+
+  const allTasks = [];
+  const completedTasks = [];
+  const pendingTasks = [];
+  screenings.forEach(s => {
+    const { ended, task } = computeWatchTaskVerbose(
+      { ...s, location: s.venue_location || s.location },
+      favMap.get(s.film_id),
+      reviewMap.get(s.film_id)
+    );
+    if (task) {
+      allTasks.push(task);
+      pendingTasks.push(task);
+    } else if (ended) {
+      completedTasks.push({
+        screening_id: s.id,
+        film_id: s.film_id,
+        title: s.title,
+        poster: s.poster,
+        screening_date: s.screening_date,
+        screening_time: s.screening_time,
+        status: 'completed',
+      });
+    }
+  });
+
+  let filteredTasks = pendingTasks;
+  if (status === 'all') {
+    filteredTasks = [...pendingTasks, ...completedTasks.map(t => ({ ...t, pending_tasks: [], urgency: 'completed' }))];
+  } else if (status === 'completed') {
+    filteredTasks = completedTasks.map(t => ({ ...t, pending_tasks: [], urgency: 'completed' }));
+  }
+
+  filteredTasks.sort((a, b) => {
+    const urgencyOrder = { high: 0, medium: 1, low: 2, completed: 3 };
+    if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) {
+      return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+    }
+    return new Date(b.screening_date) - new Date(a.screening_date);
+  });
+
+  const totalCount = pendingTasks.length;
+  const reviewPendingCount = pendingTasks.filter(t => t.pending_tasks.includes('review')).length;
+  const moodPendingCount = pendingTasks.filter(t => t.pending_tasks.includes('mood')).length;
+  const highUrgencyCount = pendingTasks.filter(t => t.urgency === 'high').length;
+  const mediumUrgencyCount = pendingTasks.filter(t => t.urgency === 'medium').length;
+  const lowUrgencyCount = pendingTasks.filter(t => t.urgency === 'low').length;
+
+  res.json({
+    tasks: filteredTasks,
+    summary: {
+      total: totalCount,
+      review_pending: reviewPendingCount,
+      mood_pending: moodPendingCount,
+      high_urgency: highUrgencyCount,
+      medium_urgency: mediumUrgencyCount,
+      low_urgency: lowUrgencyCount,
+      completed_count: completedTasks.length,
+    },
+  });
+});
+
+function computeWatchTaskVerbose(screening, fav, latestReview) {
+  const { id, film_id, screening_date, screening_time, venue, venue_name, location, notes, film_duration, title, poster, director, year } = screening;
+  const ended = isScreeningEnded(screening_date, screening_time, film_duration);
+  if (!ended) return { ended: false, task: null };
+
+  const hasReview = !!latestReview;
+  const hasMood = !!(latestReview && latestReview.mood);
+  const reviewContent = latestReview ? latestReview.content : '';
+  const hasShortReview = hasReview && reviewContent && reviewContent.trim().length >= 10;
+
+  const tasks = [];
+  if (!hasShortReview) tasks.push('review');
+  if (!hasMood) tasks.push('mood');
+
+  if (tasks.length === 0) return { ended: true, task: null };
+
+  const endMinutes = timeToMinutes(screening_time) + (Number(film_duration) || 120);
+  const daysSinceEnded = Math.floor((Date.now() - new Date(`${screening_date}T${minutesToTime(endMinutes)}:00`).getTime()) / (24 * 60 * 60 * 1000));
+
+  return {
+    ended: true,
+    task: {
+      id: `screening_${id}`,
+      task_id: `screening_${id}`,
+      screening_id: id,
+      film_id,
+      title,
+      poster,
+      director,
+      year,
+      venue_name: venue_name || venue,
+      location,
+      notes,
+      screening_date,
+      screening_time,
+      end_time: minutesToTime(endMinutes),
+      ended_at: `${screening_date} ${minutesToTime(endMinutes)}`,
+      days_since_ended: Math.max(0, daysSinceEnded),
+      pending_tasks: tasks,
+      has_review: hasReview,
+      has_short_review: hasShortReview,
+      has_mood: hasMood,
+      latest_review_id: latestReview ? latestReview.id : null,
+      latest_rating: latestReview ? latestReview.rating : null,
+      watch_status: fav ? fav.watch_status : null,
+      watched_date: fav ? fav.watched_date : null,
+      urgency: Math.max(0, daysSinceEnded) >= 7 ? 'high' : Math.max(0, daysSinceEnded) >= 3 ? 'medium' : 'low',
+    }
+  };
+}
+
+function computeWatchTask(screening, fav, latestReview) {
+  const result = computeWatchTaskVerbose(screening, fav, latestReview);
+  return result.task;
+}
+
+app.get('/api/screenings/:id/watch-task', (req, res) => {
+  const screening = db.prepare(`
+    SELECT s.*, f.title, f.poster, f.director, f.year, f.duration as film_duration,
+           v.name as venue_name, v.location as venue_location
+    FROM screenings s
+    LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
+    WHERE s.id = ?
+  `).get(req.params.id);
+
+  if (!screening) {
+    return res.status(404).json({ error: '放映不存在' });
+  }
+
+  const fav = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(screening.film_id);
+  const latestReview = db.prepare('SELECT * FROM reviews WHERE film_id = ? AND is_hidden = 0 ORDER BY created_at DESC LIMIT 1').get(screening.film_id);
+
+  const task = computeWatchTask(
+    { ...screening, location: screening.venue_location || screening.location },
+    fav,
+    latestReview
+  );
+
+  res.json({ task });
+});
+
 // ============ 统计数据 API ============
 
 app.get('/api/stats', (req, res) => {
@@ -1700,6 +1918,88 @@ app.get('/api/stats', (req, res) => {
     LIMIT 5
   `).all();
 
+  const allScreeningsForStats = db.prepare(`
+    SELECT s.*, f.duration as film_duration
+    FROM screenings s
+    LEFT JOIN films f ON s.film_id = f.id
+  `).all();
+
+  const allReviewsForStats = db.prepare('SELECT film_id, mood, content FROM reviews WHERE is_hidden = 0 ORDER BY created_at DESC').all();
+  const reviewMapForStats = new Map();
+  allReviewsForStats.forEach(r => {
+    if (!reviewMapForStats.has(r.film_id)) {
+      reviewMapForStats.set(r.film_id, r);
+    }
+  });
+
+  let endedScreeningCount = 0;
+  let pendingReviewCount = 0;
+  let pendingMoodCount = 0;
+  let completedBothCount = 0;
+  let highUrgencyCount = 0;
+  let mediumUrgencyCount = 0;
+  let lowUrgencyCount = 0;
+
+  const pendingWatchTasks = [];
+
+  allScreeningsForStats.forEach(s => {
+    const ended = isScreeningEnded(s.screening_date, s.screening_time, s.film_duration);
+    if (!ended) return;
+    endedScreeningCount++;
+
+    const review = reviewMapForStats.get(s.film_id);
+    const hasReview = !!review;
+    const hasMood = !!(review && review.mood);
+    const hasShortReview = hasReview && review.content && review.content.trim().length >= 10;
+
+    const needsReview = !hasShortReview;
+    const needsMood = !hasMood;
+
+    if (needsReview) pendingReviewCount++;
+    if (needsMood) pendingMoodCount++;
+    if (!needsReview && !needsMood) completedBothCount++;
+
+    const endMinutes = timeToMinutes(s.screening_time) + (Number(s.film_duration) || 120);
+    const daysSinceEnded = Math.max(0, Math.floor((Date.now() - new Date(`${s.screening_date}T${minutesToTime(endMinutes)}:00`).getTime()) / (24 * 60 * 60 * 1000)));
+    const urgency = daysSinceEnded >= 7 ? 'high' : daysSinceEnded >= 3 ? 'medium' : 'low';
+    if (urgency === 'high') highUrgencyCount++;
+    else if (urgency === 'medium') mediumUrgencyCount++;
+    else lowUrgencyCount++;
+
+    if (needsReview || needsMood) {
+      pendingWatchTasks.push({
+        screening_id: s.id,
+        film_id: s.film_id,
+        screening_date: s.screening_date,
+        screening_time: s.screening_time,
+        days_since_ended: daysSinceEnded,
+        urgency,
+        needs_review: needsReview,
+        needs_mood: needsMood,
+      });
+    }
+  });
+
+  pendingWatchTasks.sort((a, b) => {
+    const urgencyOrder = { high: 0, medium: 1, low: 2 };
+    if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) {
+      return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+    }
+    return b.days_since_ended - a.days_since_ended;
+  });
+
+  const filmIdsWithPendingTasks = [...new Set(pendingWatchTasks.slice(0, 10).map(t => t.film_id))];
+  const pendingTaskFilms = filmIdsWithPendingTasks.length > 0 ? db.prepare(`
+    SELECT id, title, poster, director, year FROM films WHERE id IN (${filmIdsWithPendingTasks.map(() => '?').join(',')})
+  `).all(...filmIdsWithPendingTasks) : [];
+  const filmInfoMap = new Map();
+  pendingTaskFilms.forEach(f => filmInfoMap.set(f.id, f));
+
+  const topPendingWatchTasks = pendingWatchTasks.slice(0, 5).map(t => ({
+    ...t,
+    film: filmInfoMap.get(t.film_id) || null,
+  }));
+
   res.json({
     filmCount,
     screeningCount,
@@ -1716,7 +2016,19 @@ app.get('/api/stats', (req, res) => {
     upcomingScreenings,
     recentReviews,
     recentNotifications,
-    featuredCollections
+    featuredCollections,
+    watchStats: {
+      ended_screening_count: endedScreeningCount,
+      completed_both_count: completedBothCount,
+      pending_review_count: pendingReviewCount,
+      pending_mood_count: pendingMoodCount,
+      completion_rate: endedScreeningCount > 0 ? Math.round((completedBothCount / endedScreeningCount) * 100) : 0,
+      high_urgency: highUrgencyCount,
+      medium_urgency: mediumUrgencyCount,
+      low_urgency: lowUrgencyCount,
+      total_pending: pendingWatchTasks.length,
+    },
+    topPendingWatchTasks,
   });
 });
 

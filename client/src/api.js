@@ -238,6 +238,14 @@ export const notifications = {
   delete: (id) => request(`/notifications/${id}`, { method: 'DELETE' }),
 };
 
+export const watchTasks = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return request(`/watch-tasks${qs ? '?' + qs : ''}`);
+  },
+  getByScreening: (screeningId) => request(`/screenings/${screeningId}/watch-task`),
+};
+
 export const stats = {
   get: () => request('/stats'),
 };

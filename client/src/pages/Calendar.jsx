@@ -444,20 +444,39 @@ export default function Calendar() {
                         let bgClass = 'bg-film-gold/15 text-film-gold';
                         if (s.ticket_status === 'on_sale') bgClass = 'bg-green-500/15 text-green-400';
                         if (s.ticket_status === 'sold_out') bgClass = 'bg-red-500/15 text-red-400';
+                        let ringClass = s.is_changed ? 'ring-1 ring-orange-400/50' : '';
+                        if (s.watch_pending_tasks && s.watch_pending_tasks.length > 0) {
+                          ringClass = s.watch_urgency === 'high'
+                            ? 'ring-2 ring-red-400/70'
+                            : s.watch_urgency === 'medium'
+                            ? 'ring-2 ring-amber-400/70'
+                            : 'ring-2 ring-purple-400/70';
+                        }
                         return (
                           <Link
                             key={s.id}
                             to={`/films/${s.film_id}`}
-                            className={`block text-[10px] md:text-xs px-1.5 py-0.5 rounded truncate hover:opacity-80 transition-opacity ${bgClass} ${s.is_changed ? 'ring-1 ring-orange-400/50' : ''}`}
-                            title={`${s.screening_time} ${s.title}${s.is_changed ? ' · 场次变更' : ''}`}
+                            className={`block text-[10px] md:text-xs px-1.5 py-0.5 rounded truncate hover:opacity-80 transition-opacity ${bgClass} ${ringClass}`}
+                            title={`${s.screening_time} ${s.title}${s.is_changed ? ' · 场次变更' : ''}${s.watch_pending_tasks?.length ? ' · 待补观' : ''}`}
                           >
                             <span className="font-mono">{s.screening_time}</span> {s.title}
                             {s.is_changed && <span className="ml-0.5">⚠</span>}
+                            {s.watch_pending_tasks?.length > 0 && <span className="ml-0.5">✍</span>}
                           </Link>
                         );
                       })}
                       {cell.items.length > 2 && (
                         <div className="text-[10px] text-film-cream/40">+{cell.items.length - 2} 场</div>
+                      )}
+                      {cell.items.some(s => s.watch_pending_tasks?.length > 0) && (
+                        <div className="text-[9px] mt-1 flex gap-1">
+                          {cell.items.some(s => s.watch_pending_tasks?.includes('review')) && (
+                            <span className="text-red-300">📝待评</span>
+                          )}
+                          {cell.items.some(s => s.watch_pending_tasks?.includes('mood')) && (
+                            <span className="text-purple-300">😊待心情</span>
+                          )}
+                        </div>
                       )}
                     </div>
                   </>
@@ -487,7 +506,15 @@ export default function Calendar() {
               </div>
               <div className="space-y-2 ml-2">
                 {items.map(s => (
-                  <div key={s.id} className="group p-4 bg-film-dark/60 rounded-xl border border-film-gray/50 hover:border-film-gold/40 transition-colors">
+                  <div key={s.id} className={`group p-4 bg-film-dark/60 rounded-xl border hover:border-film-gold/40 transition-colors ${
+                    s.watch_pending_tasks?.length
+                      ? s.watch_urgency === 'high'
+                        ? 'border-red-400/50'
+                        : s.watch_urgency === 'medium'
+                        ? 'border-amber-400/50'
+                        : 'border-purple-400/50'
+                      : 'border-film-gray/50'
+                  }`}>
                     <div className="flex flex-wrap items-center gap-4">
                       <div className="text-xl font-mono text-film-gold font-bold min-w-[60px]">{s.screening_time}</div>
                       <div className="w-10 h-14 bg-film-gray rounded overflow-hidden flex-shrink-0">
@@ -500,9 +527,25 @@ export default function Calendar() {
                         <div className="text-sm text-film-cream/50 mt-0.5 flex flex-wrap gap-2">
                           {s.venue && <span>🏛 {s.venue}</span>}
                           {s.location && <span>📍 {s.location}</span>}
+                          {s.is_ended && s.end_time && <span className="text-film-cream/40">⏱ 约 {s.end_time} 散场</span>}
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        {s.watch_pending_tasks?.length > 0 && (
+                          <Link
+                            to={`/films/${s.film_id}#write-review`}
+                            className={`px-2.5 py-0.5 rounded-full text-xs flex items-center gap-1 animate-pulse ${
+                              s.watch_urgency === 'high'
+                                ? 'bg-red-500/20 text-red-300 border border-red-500/40'
+                                : s.watch_urgency === 'medium'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                                : 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                            }`}
+                          >
+                            ✍ 待补观
+                            {s.watch_days_since_ended > 0 && <span>· {s.watch_days_since_ended}天</span>}
+                          </Link>
+                        )}
                         {s.ticket_status === 'on_sale' && (
                           <span className="bg-green-500/15 text-green-400 px-2.5 py-0.5 rounded-full text-xs flex items-center gap-1">
                             <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span> 正在售票
@@ -538,6 +581,38 @@ export default function Calendar() {
                     {s.is_changed && s.change_description && (
                       <div className="mt-2 ml-[84px] text-xs text-orange-400/80 bg-orange-500/5 rounded px-2 py-1">
                         ℹ {s.change_description}
+                      </div>
+                    )}
+                    {s.watch_pending_tasks?.length > 0 && (
+                      <div className="mt-2 ml-[84px] text-xs bg-film-black/40 rounded-lg p-3 border border-film-gray/30">
+                        <div className="flex items-start gap-2">
+                          <span className="text-lg">🎬</span>
+                          <div className="flex-1">
+                            <div className={`font-medium mb-1 ${
+                              s.watch_urgency === 'high' ? 'text-red-300' : s.watch_urgency === 'medium' ? 'text-amber-300' : 'text-purple-300'
+                            }`}>
+                              放映已结束{s.watch_days_since_ended > 0 ? ` ${s.watch_days_since_ended} 天` : ''}，快去留下观影记录吧！
+                            </div>
+                            <div className="flex flex-wrap gap-2 mt-2">
+                              {s.watch_pending_tasks.includes('review') && (
+                                <Link
+                                  to={`/films/${s.film_id}#write-review`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-red-500/15 text-red-300 rounded-md hover:bg-red-500/25 transition-colors"
+                                >
+                                  📝 补写短评
+                                </Link>
+                              )}
+                              {s.watch_pending_tasks.includes('mood') && (
+                                <Link
+                                  to={`/films/${s.film_id}#write-review`}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 bg-purple-500/15 text-purple-300 rounded-md hover:bg-purple-500/25 transition-colors"
+                                >
+                                  😊 补标心情
+                                </Link>
+                              )}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     )}
                   </div>

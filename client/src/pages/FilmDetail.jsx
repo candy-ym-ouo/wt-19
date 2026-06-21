@@ -12,6 +12,57 @@ const sortOptions = [
 ];
 const reportReasons = ['剧透', '人身攻击', '垃圾广告', '违规内容', '其他'];
 
+function computeScreeningWatchInfo(screenings, reviews) {
+  const now = new Date();
+  return screenings.map(s => {
+    const [h, m] = String(s.screening_time || '00:00').split(':').map(Number);
+    const duration = 120;
+    const endDate = new Date(`${s.screening_date}T00:00:00`);
+    endDate.setHours(h || 0, (m || 0) + duration, 0, 0);
+    const isEnded = now > endDate;
+    const endMinutes = (h || 0) * 60 + (m || 0) + duration;
+    const endH = Math.floor((endMinutes % 1440) / 60);
+    const endM = endMinutes % 60;
+    const endTime = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+
+    const hasReview = reviews && reviews.length > 0;
+    const latestReview = hasReview ? reviews[0] : null;
+    const hasMood = !!(latestReview && latestReview.mood);
+    const hasShortReview = hasReview && latestReview.content && latestReview.content.trim().length >= 10;
+
+    const pendingTasks = [];
+    if (isEnded && !hasShortReview) pendingTasks.push('review');
+    if (isEnded && !hasMood) pendingTasks.push('mood');
+
+    const daysSinceEnded = isEnded ? Math.max(0, Math.floor((Date.now() - endDate.getTime()) / (24 * 60 * 60 * 1000))) : 0;
+    const urgency = !isEnded ? null : (daysSinceEnded >= 7 ? 'high' : daysSinceEnded >= 3 ? 'medium' : 'low');
+
+    return {
+      ...s,
+      is_ended: isEnded,
+      end_time: endTime,
+      pending_tasks: pendingTasks,
+      has_review: hasShortReview,
+      has_mood: hasMood,
+      days_since_ended: daysSinceEnded,
+      urgency,
+    };
+  });
+}
+
+function findMostUrgentPending(screeningsWithInfo) {
+  const pending = screeningsWithInfo.filter(s => s.pending_tasks.length > 0);
+  if (pending.length === 0) return null;
+  pending.sort((a, b) => {
+    const urgencyOrder = { high: 0, medium: 1, low: 2 };
+    if (urgencyOrder[a.urgency] !== urgencyOrder[b.urgency]) {
+      return urgencyOrder[a.urgency] - urgencyOrder[b.urgency];
+    }
+    return b.days_since_ended - a.days_since_ended;
+  });
+  return pending[0];
+}
+
 const WATCH_STATUS_CONFIG = {
   want_to_watch: { label: '想看', icon: '👁️', next: 'ticketed', color: 'bg-blue-500/15 text-blue-400 border-blue-500/50 hover:bg-blue-500/25', activeColor: 'bg-blue-500 text-white hover:bg-blue-500/90' },
   ticketed: { label: '已购票', icon: '🎟️', next: 'watched', color: 'bg-film-gold/15 text-film-gold border-film-gold/50 hover:bg-film-gold/25', activeColor: 'bg-film-gold text-film-black hover:bg-film-gold/90' },
@@ -49,7 +100,10 @@ export default function FilmDetail() {
   const [showReportModal, setShowReportModal] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
   const [similarFilms, setSimilarFilms] = useState([]);
+  const [screeningsWithWatchInfo, setScreeningsWithWatchInfo] = useState([]);
+  const [mostUrgentPending, setMostUrgentPending] = useState(null);
   const statusDropdownRef = useRef(null);
+  const reviewSectionRef = useRef(null);
 
   const fetchData = () => {
     setLoading(true);
@@ -66,6 +120,9 @@ export default function FilmDetail() {
       setWatchedDate(data.watchedDate);
       setPlanDate(data.planDate);
       setSimilarFilms(similar || []);
+      const swi = computeScreeningWatchInfo(data.screenings || [], data.reviews || []);
+      setScreeningsWithWatchInfo(swi);
+      setMostUrgentPending(findMostUrgentPending(swi));
       setLoading(false);
     }).catch(() => {
       navigate('/films');
@@ -328,6 +385,39 @@ export default function FilmDetail() {
     }
   };
 
+  const handleQuickWriteReview = (preset = {}) => {
+    const draft = draftStore.get(id);
+    let baseForm = {
+      author: '',
+      content: '',
+      rating: 5,
+      mood: '',
+      watched_date: mostUrgentPending?.screening_date || new Date().toISOString().split('T')[0],
+      is_spoiler: false,
+    };
+    if (draft && draft.content?.trim()) {
+      baseForm = {
+        author: draft.author || '',
+        content: draft.content || '',
+        rating: draft.rating || 5,
+        mood: draft.mood || '',
+        watched_date: draft.watched_date || baseForm.watched_date,
+        is_spoiler: draft.is_spoiler || false,
+      };
+    }
+    setReviewForm({ ...baseForm, ...preset });
+    setShowReviewForm(true);
+    setTimeout(() => {
+      reviewSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const textarea = document.getElementById('review-content-textarea');
+      if (textarea) textarea.focus();
+    }, 100);
+  };
+
+  const handleQuickSetMood = (mood) => {
+    handleQuickWriteReview({ mood });
+  };
+
   const handleClearDraft = () => {
     if (confirm('确定要删除当前草稿吗？')) {
       draftStore.remove(id);
@@ -520,6 +610,87 @@ export default function FilmDetail() {
                   </div>
                 </div>
 
+                {mostUrgentPending && (
+                  <div className={`mt-6 rounded-xl border-2 p-5 ${
+                    mostUrgentPending.urgency === 'high'
+                      ? 'bg-red-500/5 border-red-400/40'
+                      : mostUrgentPending.urgency === 'medium'
+                      ? 'bg-amber-500/5 border-amber-400/40'
+                      : 'bg-purple-500/5 border-purple-400/40'
+                  }`}>
+                    <div className="flex items-start gap-4">
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center text-2xl flex-shrink-0 ${
+                        mostUrgentPending.urgency === 'high'
+                          ? 'bg-red-500/20'
+                          : mostUrgentPending.urgency === 'medium'
+                          ? 'bg-amber-500/20'
+                          : 'bg-purple-500/20'
+                      }`}>
+                        ✍️
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className={`font-semibold text-lg mb-1 ${
+                          mostUrgentPending.urgency === 'high'
+                            ? 'text-red-300'
+                            : mostUrgentPending.urgency === 'medium'
+                            ? 'text-amber-300'
+                            : 'text-purple-300'
+                        }`}>
+                          放映结束{mostUrgentPending.days_since_ended > 0 ? ` ${mostUrgentPending.days_since_ended} 天` : ''}，快去留下观影记录吧！
+                        </div>
+                        <div className="text-sm text-film-cream/70 mb-3">
+                          {mostUrgentPending.screening_date} {mostUrgentPending.screening_time} 场次
+                          {mostUrgentPending.venue && ` · ${mostUrgentPending.venue}`}
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {mostUrgentPending.pending_tasks.includes('review') && (
+                            <button
+                              onClick={() => handleQuickWriteReview()}
+                              className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-500/20 text-red-300 rounded-lg hover:bg-red-500/30 border border-red-500/30 transition-all font-medium text-sm"
+                            >
+                              📝 补写短评
+                            </button>
+                          )}
+                          {mostUrgentPending.pending_tasks.includes('mood') && (
+                            <div className="flex items-center gap-2">
+                              <span className="text-sm text-film-cream/50">补标心情：</span>
+                              <div className="flex gap-1">
+                                {moodOptions.map(m => (
+                                  <button
+                                    key={m}
+                                    onClick={() => handleQuickSetMood(m)}
+                                    className="px-2.5 py-1.5 text-xs bg-purple-500/15 text-purple-300 rounded-md hover:bg-purple-500/30 border border-purple-500/30 transition-all"
+                                    title={`标记心情：${m}`}
+                                  >
+                                    {m}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-4 pt-3 border-t border-film-gray/30 flex items-center gap-4 text-xs">
+                          {mostUrgentPending.pending_tasks.includes('review') && (
+                            <span className="text-red-300/80 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-red-400 rounded-full"></span>
+                              还没有短评
+                            </span>
+                          )}
+                          {mostUrgentPending.pending_tasks.includes('mood') && (
+                            <span className="text-purple-300/80 flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 bg-purple-400 rounded-full"></span>
+                              还没有观影心情
+                            </span>
+                          )}
+                          <span className="text-film-cream/40 ml-auto">
+                            {mostUrgentPending.urgency === 'high' ? '🔥 建议尽快完成' : mostUrgentPending.urgency === 'medium' ? '⏰ 记得完成哦' : '📌 有空来补记'}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {isFavorite && (
                   <div className="mt-5 p-4 bg-film-dark/60 rounded-xl border border-film-gray/50">
                     <div className="text-sm text-film-gold mb-3 font-medium">🔔 提醒设置</div>
@@ -569,17 +740,29 @@ export default function FilmDetail() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 pb-20">
-        {film.screenings && film.screenings.length > 0 && (
+        {screeningsWithWatchInfo.length > 0 && (
           <section className="mb-16">
             <h2 className="text-2xl font-serif font-bold mb-6">放映排期</h2>
             <div className="space-y-3">
-              {film.screenings.map(s => (
-                <div key={s.id} className="p-5 bg-film-dark/60 rounded-xl border border-film-gray/50 flex flex-wrap items-center gap-6">
+              {screeningsWithWatchInfo.map(s => (
+                <div key={s.id} className={`p-5 rounded-xl border flex flex-wrap items-center gap-6 transition-colors ${
+                  s.pending_tasks.length
+                    ? s.urgency === 'high'
+                      ? 'bg-red-500/5 border-red-400/40'
+                      : s.urgency === 'medium'
+                      ? 'bg-amber-500/5 border-amber-400/40'
+                      : 'bg-purple-500/5 border-purple-400/40'
+                    : 'bg-film-dark/60 border-film-gray/50'
+                }`}>
                   <div className="flex-shrink-0 text-center min-w-[70px]">
                     <div className="text-xs text-film-cream/50">
                       {new Date(s.screening_date).toLocaleDateString('zh-CN', { month: 'long' })}
                     </div>
-                    <div className="text-3xl font-serif font-bold text-film-gold">
+                    <div className={`text-3xl font-serif font-bold ${
+                      s.pending_tasks.length
+                        ? s.urgency === 'high' ? 'text-red-300' : s.urgency === 'medium' ? 'text-amber-300' : 'text-purple-300'
+                        : 'text-film-gold'
+                    }`}>
                       {new Date(s.screening_date).getDate()}
                     </div>
                     <div className="text-xs text-film-cream/50">
@@ -590,10 +773,65 @@ export default function FilmDetail() {
                     <div className="flex items-center gap-3 text-lg">
                       <span className="text-film-gold font-mono">{s.screening_time}</span>
                       {s.venue && <span className="text-film-cream/90">{s.venue}</span>}
+                      {s.is_ended && s.end_time && (
+                        <span className="text-xs text-film-cream/40 bg-film-black/40 px-2 py-0.5 rounded">
+                          约 {s.end_time} 散场
+                        </span>
+                      )}
                     </div>
                     {s.location && <p className="text-sm text-film-cream/50 mt-1">{s.location}</p>}
+                    {s.pending_tasks.length > 0 && (
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        {s.pending_tasks.includes('review') && (
+                          <span className="text-red-300 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-red-400 rounded-full"></span>
+                            待补短评
+                          </span>
+                        )}
+                        {s.pending_tasks.includes('mood') && (
+                          <span className="text-purple-300 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 bg-purple-400 rounded-full"></span>
+                            待补心情
+                          </span>
+                        )}
+                        {s.days_since_ended > 0 && (
+                          <span className="text-film-cream/40">
+                            已结束 {s.days_since_ended} 天
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                   <div className="flex flex-wrap gap-2 items-center">
+                    {s.pending_tasks.length > 0 && (
+                      <>
+                        {s.pending_tasks.includes('review') && (
+                          <button
+                            onClick={() => handleQuickWriteReview()}
+                            className="px-3 py-1 bg-red-500/20 text-red-300 rounded-full text-xs hover:bg-red-500/30 border border-red-500/30 transition-all flex items-center gap-1"
+                          >
+                            📝 补写短评
+                          </button>
+                        )}
+                        {s.pending_tasks.includes('mood') && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-xs text-film-cream/40">心情:</span>
+                            <div className="flex gap-1">
+                              {moodOptions.slice(0, 3).map(m => (
+                                <button
+                                  key={m}
+                                  onClick={() => handleQuickSetMood(m)}
+                                  className="px-2 py-0.5 text-[11px] bg-purple-500/15 text-purple-300 rounded hover:bg-purple-500/30 border border-purple-500/30 transition-all"
+                                  title={`标记心情：${m}`}
+                                >
+                                  {m}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )}
                     {s.ticket_status === 'on_sale' && (
                       <span className="bg-green-500/15 text-green-400 px-3 py-1 rounded-full text-sm flex items-center gap-1">
                         <span className="w-1.5 h-1.5 bg-green-400 rounded-full"></span> 正在售票
@@ -629,6 +867,7 @@ export default function FilmDetail() {
           </section>
         )}
 
+        <div ref={reviewSectionRef} id="write-review">
         {showReviewForm && (
           <section className="mb-12">
             <div className="p-6 bg-film-dark rounded-xl border border-film-gray/50">
@@ -707,6 +946,7 @@ export default function FilmDetail() {
                 <div>
                   <label className="text-xs text-film-cream/60 mb-1.5 block">评论内容 *</label>
                   <textarea
+                    id="review-content-textarea"
                     value={reviewForm.content}
                     onChange={(e) => handleReviewFormChange({ content: e.target.value })}
                     rows={4}
@@ -744,6 +984,7 @@ export default function FilmDetail() {
             </div>
           </section>
         )}
+        </div>
 
         <section>
           <div className="flex flex-wrap items-center justify-between gap-4 mb-6">

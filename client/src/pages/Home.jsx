@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films, stats, screenings, collections as collectionsApi } from '../api.js';
+import { films, stats, screenings, collections as collectionsApi, watchTasks } from '../api.js';
 import FilmCard from '../components/FilmCard.jsx';
 
 const typeLabels = {
@@ -10,12 +10,19 @@ const typeLabels = {
   custom: '精选专题',
 };
 
+const urgencyLabels = {
+  high: { text: '紧急', color: 'text-red-400', bg: 'bg-red-500/15' },
+  medium: { text: '提醒', color: 'text-amber-400', bg: 'bg-amber-500/15' },
+  low: { text: '待办', color: 'text-purple-400', bg: 'bg-purple-500/15' },
+};
+
 export default function Home() {
   const [featuredFilms, setFeaturedFilms] = useState([]);
   const [statsData, setStatsData] = useState(null);
   const [upcoming, setUpcoming] = useState([]);
   const [featuredCollections, setFeaturedCollections] = useState([]);
   const [similarRecommendations, setSimilarRecommendations] = useState([]);
+  const [watchTasksData, setWatchTasksData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -24,9 +31,11 @@ export default function Home() {
       stats.get(),
       screenings.list(),
       collectionsApi.list({ featured: 1 }),
-    ]).then(async ([f, s, sc, cols]) => {
+      watchTasks.list({ status: 'pending' }),
+    ]).then(async ([f, s, sc, cols, wt]) => {
       setFeaturedFilms(f);
       setStatsData(s);
+      setWatchTasksData(wt);
       const today = new Date().toISOString().split('T')[0];
       setUpcoming(sc.filter(x => x.screening_date >= today).slice(0, 5));
       setFeaturedCollections(cols.slice(0, 3));
@@ -108,6 +117,92 @@ export default function Home() {
                   <div className="text-2xl font-serif font-bold text-green-400">{statsData.watchedCount || 0}</div>
                   <div className="text-xs text-green-400/80 mt-1">已观看</div>
                 </div>
+              </div>
+            </div>
+          )}
+          {watchTasksData && watchTasksData.tasks && watchTasksData.tasks.length > 0 && (
+            <div className="mt-6 p-5 rounded-xl border border-film-gray/50 bg-gradient-to-br from-red-500/5 via-film-dark/40 to-purple-500/5">
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">✍️</span>
+                  <div>
+                    <div className="text-sm font-medium text-film-cream/80">补观待办任务</div>
+                    <div className="text-xs text-film-cream/50 mt-0.5">
+                      {watchTasksData.summary?.review_pending || 0} 条短评待补 · {watchTasksData.summary?.mood_pending || 0} 个心情待标
+                    </div>
+                  </div>
+                </div>
+                <Link to="/calendar?view=list" className="text-xs text-film-gold hover:underline">
+                  全部任务 →
+                </Link>
+              </div>
+              {watchTasksData.summary && (
+                <div className="grid grid-cols-3 gap-2 mb-4">
+                  <div className={`text-center p-2 rounded-lg ${urgencyLabels.high.bg} border border-red-500/20`}>
+                    <div className={`text-xl font-serif font-bold ${urgencyLabels.high.color}`}>
+                      {watchTasksData.summary.high_urgency || 0}
+                    </div>
+                    <div className={`text-[10px] ${urgencyLabels.high.color}/80 mt-0.5`}>{urgencyLabels.high.text}</div>
+                  </div>
+                  <div className={`text-center p-2 rounded-lg ${urgencyLabels.medium.bg} border border-amber-500/20`}>
+                    <div className={`text-xl font-serif font-bold ${urgencyLabels.medium.color}`}>
+                      {watchTasksData.summary.medium_urgency || 0}
+                    </div>
+                    <div className={`text-[10px] ${urgencyLabels.medium.color}/80 mt-0.5`}>{urgencyLabels.medium.text}</div>
+                  </div>
+                  <div className={`text-center p-2 rounded-lg ${urgencyLabels.low.bg} border border-purple-500/20`}>
+                    <div className={`text-xl font-serif font-bold ${urgencyLabels.low.color}`}>
+                      {watchTasksData.summary.low_urgency || 0}
+                    </div>
+                    <div className={`text-[10px] ${urgencyLabels.low.color}/80 mt-0.5`}>{urgencyLabels.low.text}</div>
+                  </div>
+                </div>
+              )}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {watchTasksData.tasks.slice(0, 5).map(task => (
+                  <Link
+                    key={task.id}
+                    to={`/films/${task.film_id}#write-review`}
+                    className={`flex items-center gap-3 p-3 rounded-lg border transition-all hover:scale-[1.01] ${
+                      task.urgency === 'high'
+                        ? 'bg-red-500/5 border-red-400/30 hover:bg-red-500/10'
+                        : task.urgency === 'medium'
+                        ? 'bg-amber-500/5 border-amber-400/30 hover:bg-amber-500/10'
+                        : 'bg-purple-500/5 border-purple-400/30 hover:bg-purple-500/10'
+                    }`}
+                  >
+                    <div className="w-10 h-14 flex-shrink-0 bg-film-gray/60 rounded overflow-hidden">
+                      {task.poster && <img src={task.poster} alt="" className="w-full h-full object-cover" />}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="font-serif font-semibold text-film-cream text-sm truncate">{task.title}</div>
+                      <div className="text-xs text-film-cream/50 mt-0.5">
+                        {new Date(task.screening_date).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', weekday: 'short' })}
+                        {task.screening_time && ` · ${task.screening_time}`}
+                      </div>
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {task.pending_tasks?.includes('review') && (
+                          <span className="text-[10px] bg-red-500/20 text-red-300 px-1.5 py-0.5 rounded">
+                            待补短评
+                          </span>
+                        )}
+                        {task.pending_tasks?.includes('mood') && (
+                          <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded">
+                            待补心情
+                          </span>
+                        )}
+                        {task.days_since_ended > 0 && (
+                          <span className="text-[10px] text-film-cream/40">
+                            {task.days_since_ended}天前
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className={`flex-shrink-0 text-[10px] px-2 py-1 rounded-full ${urgencyLabels[task.urgency]?.bg} ${urgencyLabels[task.urgency]?.color}`}>
+                      {urgencyLabels[task.urgency]?.text}
+                    </div>
+                  </Link>
+                ))}
               </div>
             </div>
           )}
