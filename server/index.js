@@ -505,7 +505,7 @@ app.delete('/api/notifications/:id', (req, res) => {
 // ============ 专题策展 API ============
 
 app.get('/api/collections', (req, res) => {
-  const { type, featured, active = 1 } = req.query;
+  const { type, featured, active } = req.query;
   let sql = `
     SELECT c.*, COUNT(cf.id) as film_count
     FROM collections c
@@ -521,8 +521,13 @@ app.get('/api/collections', (req, res) => {
   if (featured) {
     sql += ' AND c.is_featured = 1';
   }
-  if (active) {
-    sql += ' AND c.is_active = 1';
+  if (active !== undefined && active !== null && active !== '') {
+    const activeVal = Number(active);
+    if (activeVal === 1) {
+      sql += ' AND c.is_active = 1';
+    } else if (activeVal === 0) {
+      sql += ' AND c.is_active = 0';
+    }
   }
 
   sql += ' GROUP BY c.id ORDER BY c.sort_order ASC, c.created_at DESC';

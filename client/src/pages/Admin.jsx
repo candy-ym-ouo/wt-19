@@ -47,7 +47,7 @@ export default function Admin() {
     setLoading(true);
     const [s, f, sc, r, n, fav, rp, cols] = await Promise.all([
       statsApi.get(), filmsApi.list(), screeningsApi.list(), reviewsApi.list({ include_hidden: 1 }),
-      notifApi.list(), favApi.list(), reportsApi.list(), collectionsApi.list({ active: 0 })
+      notifApi.list(), favApi.list(), reportsApi.list(), collectionsApi.list()
     ]);
     setStats(s);
     setFilmList(f);
@@ -295,6 +295,17 @@ export default function Admin() {
     }
   };
 
+  const handleToggleCollectionActive = async (col) => {
+    const action = col.is_active ? '下架' : '启用';
+    if (!confirm(`确定${action}此专题？${action === '下架' ? '下架后将不会在前台展示。' : '启用后将在前台展示。'}`)) return;
+    try {
+      await collectionsApi.update(col.id, { is_active: col.is_active ? 0 : 1 });
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const handleOpenCollection = async (col) => {
     try {
       const detail = await collectionsApi.get(col.id);
@@ -494,10 +505,14 @@ export default function Admin() {
               ) : (
                 <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {collectionList.map(col => (
-                    <div key={col.id} className="group bg-film-dark/50 rounded-xl border border-film-gray/50 p-5 hover:border-film-gold/30 transition-colors">
+                    <div key={col.id} className={`group rounded-xl border p-5 transition-colors ${
+                      col.is_active 
+                        ? 'bg-film-dark/50 border-film-gray/50 hover:border-film-gold/30' 
+                        : 'bg-film-black/30 border-film-gray/20 opacity-70 hover:border-film-cream/30'
+                    }`}>
                       <div className="flex items-start justify-between gap-3 mb-3">
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
+                          <div className="flex items-center gap-2 mb-1 flex-wrap">
                             <span className={`text-xs px-2 py-0.5 rounded-full ${
                               col.type === 'director' ? 'bg-purple-500/20 text-purple-400' :
                               col.type === 'country' ? 'bg-blue-500/20 text-blue-400' :
@@ -507,9 +522,10 @@ export default function Admin() {
                               {col.type === 'director' ? '导演' : col.type === 'country' ? '地区' : col.type === 'theme' ? '主题' : '自定义'}
                             </span>
                             {col.is_featured && <span className="text-xs text-film-gold">⭐ 首页推荐</span>}
-                            {!col.is_active && <span className="text-xs text-film-cream/40">已下架</span>}
+                            {!col.is_active && <span className="text-xs px-2 py-0.5 rounded-full bg-film-cream/10 text-film-cream/70 border border-film-cream/20">已下架</span>}
+                            {col.is_active && <span className="text-xs text-green-400">● 已启用</span>}
                           </div>
-                          <h3 className="font-semibold text-film-cream truncate">{col.title}</h3>
+                          <h3 className={`font-semibold truncate ${col.is_active ? 'text-film-cream' : 'text-film-cream/60'}`}>{col.title}</h3>
                           {col.subtitle && <p className="text-xs text-film-cream/50 italic truncate">{col.subtitle}</p>}
                         </div>
                       </div>
@@ -526,6 +542,17 @@ export default function Admin() {
                           className="flex-1 text-sm px-3 py-1.5 bg-film-gold/10 text-film-gold rounded-lg hover:bg-film-gold/20 transition-colors"
                         >
                           编排影片
+                        </button>
+                        <button
+                          onClick={() => handleToggleCollectionActive(col)}
+                          className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${
+                            col.is_active 
+                              ? 'text-film-orange hover:bg-film-orange/10' 
+                              : 'text-green-400 hover:bg-green-400/10'
+                          }`}
+                          title={col.is_active ? '下架' : '启用'}
+                        >
+                          {col.is_active ? '下架' : '启用'}
                         </button>
                         <button
                           onClick={() => openEditCollection(col)}
@@ -555,18 +582,34 @@ export default function Admin() {
                   >
                     ← 返回专题列表
                   </button>
-                  <h2 className="text-2xl font-serif font-bold">{activeCollection.title}</h2>
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-2xl font-serif font-bold">{activeCollection.title}</h2>
+                    {!activeCollection.is_active && <span className="text-xs px-2 py-0.5 rounded-full bg-film-cream/10 text-film-cream/70 border border-film-cream/20">已下架</span>}
+                    {activeCollection.is_active && <span className="text-xs text-green-400">● 已启用</span>}
+                  </div>
                   <p className="text-film-cream/60 mt-1">已收录 {activeCollection.films?.length || 0} 部影片</p>
                 </div>
-                <button
-                  onClick={() => {
-                    setShowAddFilmToCollection(true);
-                    setAddFilmForm({ film_id: '', sort_order: (activeCollection.films?.length || 0) + 1, note: '' });
-                  }}
-                  className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
-                >
-                  + 添加影片
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleToggleCollectionActive(activeCollection)}
+                    className={`px-5 py-2 font-medium rounded-lg transition-colors ${
+                      activeCollection.is_active 
+                        ? 'bg-film-orange/20 text-film-orange hover:bg-film-orange/30' 
+                        : 'bg-green-500/20 text-green-400 hover:bg-green-500/30'
+                    }`}
+                  >
+                    {activeCollection.is_active ? '下架专题' : '启用专题'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowAddFilmToCollection(true);
+                      setAddFilmForm({ film_id: '', sort_order: (activeCollection.films?.length || 0) + 1, note: '' });
+                    }}
+                    className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+                  >
+                    + 添加影片
+                  </button>
+                </div>
               </div>
 
               {activeCollection.films?.length === 0 ? (

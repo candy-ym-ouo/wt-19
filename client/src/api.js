@@ -106,7 +106,7 @@ export const stats = {
 
 export const collections = {
   list: (params = {}) => {
-    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
     return request(`/collections${qs ? '?' + qs : ''}`);
   },
   get: (id) => request(`/collections/${id}`),
