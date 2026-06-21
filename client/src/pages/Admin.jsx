@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi, venues as venuesApi } from '../api.js';
+import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi, venues as venuesApi, draftStore } from '../api.js';
 
 const emptyFilm = {
   title: '', original_title: '', director: '', year: '', country: '',
@@ -38,6 +38,7 @@ export default function Admin() {
   const [screeningVenueFilter, setScreeningVenueFilter] = useState('');
   const [favoriteStatusFilter, setFavoriteStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [drafts, setDrafts] = useState([]);
   const [showFilmForm, setShowFilmForm] = useState(false);
   const [showScreeningForm, setShowScreeningForm] = useState(false);
   const [showVenueForm, setShowVenueForm] = useState(false);
@@ -69,10 +70,48 @@ export default function Admin() {
     setFavoriteList(fav);
     setReportList(rp);
     setCollectionList(cols);
+    loadDrafts();
     setLoading(false);
   };
 
+  const loadDrafts = () => {
+    draftStore.cleanupExpired();
+    const allDrafts = draftStore.getAllArray().filter(d => d.content?.trim());
+    setDrafts(allDrafts);
+  };
+
+  const handleDeleteDraft = (filmId) => {
+    if (!confirm('确定要删除这个草稿吗？')) return;
+    draftStore.remove(filmId);
+    loadDrafts();
+  };
+
+  const handleClearExpiredDrafts = () => {
+    const removed = draftStore.cleanupExpired();
+    if (removed > 0) {
+      alert(`已清理 ${removed} 个过期草稿`);
+    } else {
+      alert('没有需要清理的过期草稿');
+    }
+    loadDrafts();
+  };
+
+  const handleClearAllDrafts = () => {
+    if (!confirm('确定要清空所有草稿吗？此操作不可撤销。')) return;
+    draftStore.clearAll();
+    loadDrafts();
+  };
+
   useEffect(() => { fetchAll(); }, []);
+
+  useEffect(() => {
+    window.addEventListener('draftUpdated', loadDrafts);
+    window.addEventListener('storage', loadDrafts);
+    return () => {
+      window.removeEventListener('draftUpdated', loadDrafts);
+      window.removeEventListener('storage', loadDrafts);
+    };
+  }, []);
 
   const openNewFilm = () => {
     setEditingFilm(null);
@@ -468,6 +507,7 @@ export default function Admin() {
     { key: 'venues', label: '场馆管理', icon: '🏛' },
     { key: 'screenings', label: '放映场次', icon: '📅' },
     { key: 'reviews', label: '短评管理', icon: '✍️' },
+    { key: 'drafts', label: '草稿管理', icon: '📝' },
     { key: 'reports', label: '举报审核', icon: '🚨' },
     { key: 'favorites', label: '观影计划', icon: '🎯' },
     { key: 'notifications', label: '通知中心', icon: '📬' },
@@ -501,16 +541,13 @@ export default function Admin() {
 
       {activeTab === 'overview' && stats && (
         <div>
-          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-10">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-10">
             {[
               { label: '影片总数', value: stats.filmCount, icon: '🎬', color: 'from-film-gold/20 to-film-gold/5' },
-              { label: '专题总数', value: stats.collectionCount || 0, icon: '📚', color: 'from-indigo-500/20 to-indigo-500/5' },
-              { label: '场馆总数', value: stats.venueCount || 0, icon: '🏛', color: 'from-cyan-500/20 to-cyan-500/5' },
-              { label: '放映场次', value: stats.screeningCount, icon: '📅', color: 'from-blue-500/20 to-blue-500/5' },
               { label: '短评数量', value: stats.reviewCount, icon: '✍️', color: 'from-pink-500/20 to-pink-500/5' },
-              { label: '收藏数量', value: stats.favoriteCount, icon: '❤️', color: 'from-red-500/20 to-red-500/5' },
-              { label: '待审举报', value: stats.pendingReportCount, icon: '�', color: 'from-red-500/20 to-red-500/5' },
-              { label: '未读通知', value: stats.unreadNotificationCount, icon: '�', color: 'from-orange-500/20 to-orange-500/5' },
+              { label: '草稿数量', value: drafts.length, icon: '📝', color: 'from-yellow-500/20 to-yellow-500/5' },
+              { label: '待审举报', value: stats.pendingReportCount, icon: '🚨', color: 'from-red-500/20 to-red-500/5' },
+              { label: '未读通知', value: stats.unreadNotificationCount, icon: '📬', color: 'from-orange-500/20 to-orange-500/5' },
             ].map(item => (
               <div key={item.label} className={`p-5 rounded-xl bg-gradient-to-br ${item.color} border border-film-gray/50`}>
                 <div className="text-3xl mb-2">{item.icon}</div>
@@ -1071,6 +1108,90 @@ export default function Admin() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {activeTab === 'drafts' && (
+        <div>
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
+            <div>
+              <p className="text-film-cream/60">共 {drafts.length} 个草稿</p>
+              <p className="text-xs text-film-cream/40 mt-1">草稿存储在浏览器本地，超过7天未编辑将自动清理</p>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={handleClearExpiredDrafts}
+                className="px-4 py-2 bg-film-gray/50 text-film-cream/70 border border-film-gray rounded-lg hover:bg-film-gray transition-colors text-sm"
+              >
+                清理过期
+              </button>
+              <button
+                onClick={handleClearAllDrafts}
+                className="px-4 py-2 bg-film-red/10 text-film-red border border-film-red/50 rounded-lg hover:bg-film-red/20 transition-colors text-sm"
+              >
+                清空全部
+              </button>
+            </div>
+          </div>
+          {drafts.length === 0 ? (
+            <div className="py-16 text-center text-film-cream/50 border border-dashed border-film-gray rounded-xl">
+              <div className="text-4xl mb-3">📝</div>
+              暂无草稿
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {drafts.map(d => (
+                <div key={d.id} className="p-5 bg-film-dark/50 rounded-xl border border-film-gray/50">
+                  <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-14 bg-film-gray rounded overflow-hidden flex-shrink-0">
+                        {d.film_poster && <img src={d.film_poster} alt="" className="w-full h-full object-cover" />}
+                      </div>
+                      <div>
+                        <Link to={`/films/${d.film_id}`} className="font-medium text-film-cream hover:text-film-gold">
+                          {d.film_title || '未知影片'}
+                        </Link>
+                        <div className="text-xs text-film-cream/40 mt-0.5">
+                          {d.film_director && `导演：${d.film_director}`}
+                          {d.film_year && ` · ${d.film_year}年`}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="text-film-gold text-sm">{'★'.repeat(d.rating || 0)}</span>
+                      <span className="text-film-cream/50 text-xs">
+                        最后编辑：{new Date(d.updated_at).toLocaleString('zh-CN')}
+                      </span>
+                      <button
+                        onClick={() => handleDeleteDraft(d.film_id)}
+                        className="text-film-cream/30 hover:text-film-red p-1.5 rounded hover:bg-film-red/10 transition-colors"
+                        title="删除草稿"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <p className="text-film-cream/85 leading-relaxed font-serif line-clamp-2">{d.content}</p>
+                  <div className="mt-3 flex items-center gap-2 flex-wrap">
+                    {d.author && (
+                      <span className="text-xs text-film-cream/50">作者：{d.author}</span>
+                    )}
+                    {d.mood && (
+                      <span className="text-xs bg-film-gray text-film-cream/60 px-2 py-0.5 rounded-full">{d.mood}</span>
+                    )}
+                    {d.watched_date && (
+                      <span className="text-xs text-film-cream/40">观看于 {d.watched_date}</span>
+                    )}
+                    {d.is_spoiler && (
+                      <span className="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full">剧透</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

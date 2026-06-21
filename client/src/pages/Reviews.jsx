@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { reviews as reviewsApi, reports as reportsApi, likeStore } from '../api.js';
+import { Link, useNavigate } from 'react-router-dom';
+import { reviews as reviewsApi, reports as reportsApi, likeStore, draftStore } from '../api.js';
 
 const moodColors = {
   '感动': 'bg-pink-500/20 text-pink-300',
@@ -22,6 +22,7 @@ const reportReasons = ['剧透', '人身攻击', '垃圾广告', '违规内容',
 const moodOptions = ['感动', '愉悦', '沉思', '震撼', '忧郁', '温暖'];
 
 export default function Reviews() {
+  const navigate = useNavigate();
   const [list, setList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState('created_at_desc');
@@ -39,6 +40,8 @@ export default function Reviews() {
   const [filterMood, setFilterMood] = useState('');
   const [filterRatingMin, setFilterRatingMin] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [draftCount, setDraftCount] = useState(0);
+  const [draftFilmIds, setDraftFilmIds] = useState(new Set());
 
   const fetchData = () => {
     setLoading(true);
@@ -54,6 +57,23 @@ export default function Reviews() {
   };
 
   useEffect(() => { fetchData(); }, [sort, search, filterMood, filterRatingMin]);
+
+  const updateDraftInfo = () => {
+    draftStore.cleanupExpired();
+    const drafts = draftStore.getAllArray().filter(d => d.content?.trim());
+    setDraftCount(drafts.length);
+    setDraftFilmIds(new Set(drafts.map(d => String(d.film_id))));
+  };
+
+  useEffect(() => {
+    updateDraftInfo();
+    window.addEventListener('draftUpdated', updateDraftInfo);
+    window.addEventListener('storage', updateDraftInfo);
+    return () => {
+      window.removeEventListener('draftUpdated', updateDraftInfo);
+      window.removeEventListener('storage', updateDraftInfo);
+    };
+  }, []);
 
   const resetFilters = () => {
     setSearch('');
@@ -136,17 +156,30 @@ export default function Reviews() {
             <h1 className="text-3xl md:text-4xl font-serif font-bold">观后短评</h1>
             <p className="text-film-cream/60 mt-2">共 {list.length} 条观影记录</p>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-film-cream/50">排序：</span>
-            <select
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-              className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
-            >
-              {sortOptions.map(s => (
-                <option key={s.value} value={s.value}>{s.label}</option>
-              ))}
-            </select>
+          <div className="flex items-center gap-3">
+            {draftCount > 0 && (
+              <button
+                onClick={() => navigate('/drafts')}
+                className="px-4 py-2 bg-film-gold/10 text-film-gold border border-film-gold/50 rounded-lg hover:bg-film-gold/20 transition-colors flex items-center gap-2 text-sm"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                草稿箱 <span className="bg-film-gold text-film-black px-1.5 py-0.5 rounded text-xs font-bold">{draftCount}</span>
+              </button>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-film-cream/50">排序：</span>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value)}
+                className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+              >
+                {sortOptions.map(s => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -236,9 +269,17 @@ export default function Reviews() {
               <div className="flex-1 min-w-0">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <Link to={`/films/${r.film_id}`} className="font-serif font-bold text-lg text-film-cream hover:text-film-gold transition-colors">
-                      {r.title}
-                    </Link>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Link to={`/films/${r.film_id}`} className="font-serif font-bold text-lg text-film-cream hover:text-film-gold transition-colors">
+                        {r.title}
+                      </Link>
+                      {draftFilmIds.has(String(r.film_id)) && (
+                        <span className="text-xs bg-film-gold/20 text-film-gold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 bg-film-gold rounded-full animate-pulse"></span>
+                          有草稿
+                        </span>
+                      )}
+                    </div>
                     {r.director && <p className="text-sm text-film-cream/50 mt-0.5">导演：{r.director}</p>}
                   </div>
                   <button

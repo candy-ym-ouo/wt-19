@@ -1,6 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi, likeStore } from '../api.js';
+import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi, likeStore, draftStore } from '../api.js';
 import FilmCard from '../components/FilmCard.jsx';
 
 const moodOptions = ['感动', '愉悦', '沉思', '震撼', '忧郁', '温暖'];
@@ -34,6 +34,10 @@ export default function FilmDetail() {
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewForm, setReviewForm] = useState({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
   const [reviewSort, setReviewSort] = useState('created_at_desc');
+  const [hasDraft, setHasDraft] = useState(false);
+  const [draftSaved, setDraftSaved] = useState(false);
+  const [hasExpiredDraft, setHasExpiredDraft] = useState(false);
+  const autoSaveTimerRef = useRef(null);
   const [showSpoilers, setShowSpoilers] = useState({});
   const [likedReviews, setLikedReviews] = useState(() => {
     const liked = {};
@@ -119,6 +123,45 @@ export default function FilmDetail() {
       window.removeEventListener('storage', syncLikes);
     };
   }, []);
+
+  const autoSaveDraft = useCallback((form) => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+    }
+    autoSaveTimerRef.current = setTimeout(() => {
+      if (film && (form.content?.trim() || form.author || form.mood || form.watched_date)) {
+        draftStore.save(id, form, {
+          title: film.title,
+          poster: film.poster,
+          director: film.director,
+          year: film.year
+        });
+        setDraftSaved(true);
+        setTimeout(() => setDraftSaved(false), 2000);
+      }
+      setHasDraft(draftStore.hasDraft(id));
+    }, 1000);
+  }, [film, id]);
+
+  useEffect(() => {
+    const checkDraft = () => {
+      const draft = draftStore.get(id);
+      if (draft) {
+        setHasDraft(true);
+      } else {
+        setHasDraft(false);
+      }
+    };
+    checkDraft();
+    draftStore.cleanupExpired();
+    window.addEventListener('draftUpdated', checkDraft);
+    return () => {
+      window.removeEventListener('draftUpdated', checkDraft);
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+      }
+    };
+  }, [id]);
 
   const handleReport = async (e) => {
     e.preventDefault();
@@ -232,6 +275,41 @@ export default function FilmDetail() {
     }
   };
 
+  const handleReviewFormChange = (updates) => {
+    const newForm = { ...reviewForm, ...updates };
+    setReviewForm(newForm);
+    autoSaveDraft(newForm);
+  };
+
+  const handleOpenReviewForm = () => {
+    const draft = draftStore.get(id);
+    if (draft && draft.content?.trim()) {
+      const confirmRestore = confirm(`发现未完成的草稿，最后编辑于 ${new Date(draft.updated_at).toLocaleString('zh-CN')}，是否恢复？`);
+      if (confirmRestore) {
+        setReviewForm({
+          author: draft.author || '',
+          content: draft.content || '',
+          rating: draft.rating || 5,
+          mood: draft.mood || '',
+          watched_date: draft.watched_date || '',
+          is_spoiler: draft.is_spoiler || false,
+        });
+      }
+    }
+    setShowReviewForm(true);
+  };
+
+  const handleCloseReviewForm = () => {
+    if (reviewForm.content?.trim()) {
+      const confirmClose = confirm('关闭后当前编辑内容将保存为草稿，是否继续？');
+      if (!confirmClose) return;
+    }
+    setShowReviewForm(false);
+    if (!reviewForm.content?.trim()) {
+      draftStore.remove(id);
+    }
+  };
+
   const handleSubmitReview = async (e) => {
     e.preventDefault();
     if (!reviewForm.content.trim()) {
@@ -240,11 +318,21 @@ export default function FilmDetail() {
     }
     try {
       await reviewsApi.create({ ...reviewForm, film_id: id, is_spoiler: reviewForm.is_spoiler ? 1 : 0 });
+      draftStore.remove(id);
       setShowReviewForm(false);
       setReviewForm({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
+      setHasDraft(false);
       fetchData();
     } catch (err) {
       alert(err.message);
+    }
+  };
+
+  const handleClearDraft = () => {
+    if (confirm('确定要删除当前草稿吗？')) {
+      draftStore.remove(id);
+      setReviewForm({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
+      setHasDraft(false);
     }
   };
 
@@ -413,15 +501,23 @@ export default function FilmDetail() {
                       )}
                     </>
                   )}
-                  <button
-                    onClick={() => setShowReviewForm(!showReviewForm)}
-                    className="px-6 py-2.5 rounded-lg font-medium bg-film-gray text-film-cream hover:bg-film-gray/80 transition-all inline-flex items-center gap-2"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                    写短评
-                  </button>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={handleOpenReviewForm}
+                      className="px-6 py-2.5 rounded-lg font-medium bg-film-gray text-film-cream hover:bg-film-gray/80 transition-all inline-flex items-center gap-2"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                      写短评
+                    </button>
+                    {hasDraft && (
+                      <span className="text-xs text-film-gold flex items-center gap-1">
+                        <span className="w-2 h-2 bg-film-gold rounded-full animate-pulse"></span>
+                        有草稿
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {isFavorite && (
@@ -536,7 +632,28 @@ export default function FilmDetail() {
         {showReviewForm && (
           <section className="mb-12">
             <div className="p-6 bg-film-dark rounded-xl border border-film-gray/50">
-              <h3 className="text-lg font-semibold mb-5">发表观后短评</h3>
+              <div className="flex items-center justify-between mb-5">
+                <h3 className="text-lg font-semibold">发表观后短评</h3>
+                <div className="flex items-center gap-3">
+                  {draftSaved && (
+                    <span className="text-xs text-green-400 flex items-center gap-1">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      已自动保存
+                    </span>
+                  )}
+                  {hasDraft && (
+                    <button
+                      type="button"
+                      onClick={handleClearDraft}
+                      className="text-xs text-film-cream/40 hover:text-film-red transition-colors"
+                    >
+                      清除草稿
+                    </button>
+                  )}
+                </div>
+              </div>
               <form onSubmit={handleSubmitReview} className="space-y-4">
                 <div className="grid md:grid-cols-3 gap-4">
                   <div>
@@ -544,7 +661,7 @@ export default function FilmDetail() {
                     <input
                       type="text"
                       value={reviewForm.author}
-                      onChange={(e) => setReviewForm({ ...reviewForm, author: e.target.value })}
+                      onChange={(e) => handleReviewFormChange({ author: e.target.value })}
                       placeholder="匿名观众"
                       className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
                     />
@@ -554,7 +671,7 @@ export default function FilmDetail() {
                     <input
                       type="date"
                       value={reviewForm.watched_date}
-                      onChange={(e) => setReviewForm({ ...reviewForm, watched_date: e.target.value })}
+                      onChange={(e) => handleReviewFormChange({ watched_date: e.target.value })}
                       className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
                     />
                   </div>
@@ -562,7 +679,7 @@ export default function FilmDetail() {
                     <label className="text-xs text-film-cream/60 mb-1.5 block">观影心情</label>
                     <select
                       value={reviewForm.mood}
-                      onChange={(e) => setReviewForm({ ...reviewForm, mood: e.target.value })}
+                      onChange={(e) => handleReviewFormChange({ mood: e.target.value })}
                       className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
                     >
                       <option value="">选择心情</option>
@@ -577,7 +694,7 @@ export default function FilmDetail() {
                       <button
                         type="button"
                         key={r}
-                        onClick={() => setReviewForm({ ...reviewForm, rating: r })}
+                        onClick={() => handleReviewFormChange({ rating: r })}
                         className={`px-4 py-2 rounded-lg text-sm transition-colors ${
                           reviewForm.rating >= r ? 'bg-film-gold text-film-black' : 'bg-film-gray text-film-cream/50'
                         }`}
@@ -591,7 +708,7 @@ export default function FilmDetail() {
                   <label className="text-xs text-film-cream/60 mb-1.5 block">评论内容 *</label>
                   <textarea
                     value={reviewForm.content}
-                    onChange={(e) => setReviewForm({ ...reviewForm, content: e.target.value })}
+                    onChange={(e) => handleReviewFormChange({ content: e.target.value })}
                     rows={4}
                     placeholder="写下你对这部电影的感受..."
                     className="w-full px-3 py-2 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
@@ -602,7 +719,7 @@ export default function FilmDetail() {
                     <input
                       type="checkbox"
                       checked={reviewForm.is_spoiler}
-                      onChange={(e) => setReviewForm({ ...reviewForm, is_spoiler: e.target.checked })}
+                      onChange={(e) => handleReviewFormChange({ is_spoiler: e.target.checked })}
                       className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
                     />
                     <span className="text-sm text-film-cream/80">标记为剧透</span>
@@ -611,7 +728,7 @@ export default function FilmDetail() {
                 <div className="flex justify-end gap-3">
                   <button
                     type="button"
-                    onClick={() => setShowReviewForm(false)}
+                    onClick={handleCloseReviewForm}
                     className="px-5 py-2.5 rounded-lg text-film-cream/60 hover:text-film-cream transition-colors"
                   >
                     取消

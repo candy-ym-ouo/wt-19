@@ -1,4 +1,6 @@
 import { NavLink, Link } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { draftStore } from '../api.js';
 
 const navItems = [
   { to: '/', label: '首页', end: true },
@@ -7,10 +9,28 @@ const navItems = [
   { to: '/calendar', label: '放映日历' },
   { to: '/reviews', label: '观后短评' },
   { to: '/favorites', label: '观影计划' },
+  { to: '/drafts', label: '草稿箱' },
   { to: '/admin', label: '后台维护' },
 ];
 
 export default function Navbar() {
+  const [draftCount, setDraftCount] = useState(0);
+
+  const updateDraftCount = () => {
+    draftStore.cleanupExpired();
+    setDraftCount(draftStore.getCount());
+  };
+
+  useEffect(() => {
+    updateDraftCount();
+    window.addEventListener('draftUpdated', updateDraftCount);
+    window.addEventListener('storage', updateDraftCount);
+    return () => {
+      window.removeEventListener('draftUpdated', updateDraftCount);
+      window.removeEventListener('storage', updateDraftCount);
+    };
+  }, []);
+
   return (
     <header className="sticky top-0 z-50 bg-film-black/90 backdrop-blur-md border-b border-film-gray/50">
       <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
@@ -30,7 +50,7 @@ export default function Navbar() {
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `px-4 py-2 text-sm rounded-lg transition-all duration-200 ${
+                `px-4 py-2 text-sm rounded-lg transition-all duration-200 inline-flex items-center gap-1.5 ${
                   isActive
                     ? 'bg-film-gold/10 text-film-gold'
                     : 'text-film-cream/70 hover:text-film-cream hover:bg-film-gray/50'
@@ -38,6 +58,11 @@ export default function Navbar() {
               }
             >
               {item.label}
+              {item.to === '/drafts' && draftCount > 0 && (
+                <span className="bg-film-gold text-film-black text-xs px-1.5 py-0.5 rounded-full font-bold min-w-[18px] text-center">
+                  {draftCount}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>
@@ -50,7 +75,7 @@ export default function Navbar() {
               to={item.to}
               end={item.end}
               className={({ isActive }) =>
-                `px-3 py-1.5 text-xs rounded-lg whitespace-nowrap transition-all ${
+                `px-3 py-1.5 text-xs rounded-lg whitespace-nowrap transition-all inline-flex items-center gap-1 ${
                   isActive
                     ? 'bg-film-gold/10 text-film-gold'
                     : 'text-film-cream/70 hover:text-film-cream'
@@ -58,6 +83,11 @@ export default function Navbar() {
               }
             >
               {item.label}
+              {item.to === '/drafts' && draftCount > 0 && (
+                <span className="bg-film-gold text-film-black text-[10px] px-1 rounded-full font-bold">
+                  {draftCount}
+                </span>
+              )}
             </NavLink>
           ))}
         </nav>

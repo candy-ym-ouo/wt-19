@@ -9,6 +9,7 @@ import FilmDetail from './pages/FilmDetail.jsx';
 import Calendar from './pages/Calendar.jsx';
 import Reviews from './pages/Reviews.jsx';
 import Favorites from './pages/Favorites.jsx';
+import Drafts from './pages/Drafts.jsx';
 import Admin from './pages/Admin.jsx';
 
 function App() {
@@ -25,6 +26,7 @@ function App() {
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/reviews" element={<Reviews />} />
           <Route path="/favorites" element={<Favorites />} />
+          <Route path="/drafts" element={<Drafts />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>
       </main>
