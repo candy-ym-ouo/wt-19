@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi } from '../api.js';
+import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi, likeStore } from '../api.js';
 
 const moodOptions = ['感动', '愉悦', '沉思', '震撼', '忧郁', '温暖'];
 const ratingOptions = [1, 2, 3, 4, 5];
@@ -23,7 +23,13 @@ export default function FilmDetail() {
   const [reviewForm, setReviewForm] = useState({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
   const [reviewSort, setReviewSort] = useState('created_at_desc');
   const [showSpoilers, setShowSpoilers] = useState({});
-  const [likedReviews, setLikedReviews] = useState({});
+  const [likedReviews, setLikedReviews] = useState(() => {
+    const liked = {};
+    likeStore.getLikedArray().forEach(id => {
+      liked[id] = true;
+    });
+    return liked;
+  });
   const [showReportModal, setShowReportModal] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
 
@@ -49,9 +55,10 @@ export default function FilmDetail() {
   };
 
   const handleLike = async (reviewId) => {
-    if (likedReviews[reviewId]) return;
+    if (likeStore.isLiked(reviewId)) return;
     try {
       const res = await reviewsApi.like(reviewId);
+      likeStore.addLike(reviewId);
       setLikedReviews(prev => ({ ...prev, [reviewId]: true }));
       setFilm(prev => ({
         ...prev,
@@ -59,10 +66,27 @@ export default function FilmDetail() {
           r.id === reviewId ? { ...r, likes: res.likes } : r
         )
       }));
+      window.dispatchEvent(new CustomEvent('reviewLikeUpdated'));
     } catch (err) {
       alert(err.message);
     }
   };
+
+  useEffect(() => {
+    const syncLikes = () => {
+      const liked = {};
+      likeStore.getLikedArray().forEach(id => {
+        liked[id] = true;
+      });
+      setLikedReviews(liked);
+    };
+    window.addEventListener('reviewLikeUpdated', syncLikes);
+    window.addEventListener('storage', syncLikes);
+    return () => {
+      window.removeEventListener('reviewLikeUpdated', syncLikes);
+      window.removeEventListener('storage', syncLikes);
+    };
+  }, []);
 
   const handleReport = async (e) => {
     e.preventDefault();

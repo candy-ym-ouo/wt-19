@@ -1,4 +1,5 @@
 const API_BASE = '/api';
+const LIKES_STORAGE_KEY = 'film_notes_liked_reviews';
 
 async function request(path, options = {}) {
   const res = await fetch(`${API_BASE}${path}`, {
@@ -11,6 +12,33 @@ async function request(path, options = {}) {
   }
   return res.json();
 }
+
+export const likeStore = {
+  getLikedIds: () => {
+    try {
+      const data = localStorage.getItem(LIKES_STORAGE_KEY);
+      return data ? new Set(JSON.parse(data)) : new Set();
+    } catch {
+      return new Set();
+    }
+  },
+  isLiked: (reviewId) => {
+    return likeStore.getLikedIds().has(String(reviewId));
+  },
+  addLike: (reviewId) => {
+    const ids = likeStore.getLikedIds();
+    ids.add(String(reviewId));
+    localStorage.setItem(LIKES_STORAGE_KEY, JSON.stringify([...ids]));
+  },
+  removeLike: (reviewId) => {
+    const ids = likeStore.getLikedIds();
+    ids.delete(String(reviewId));
+    localStorage.setItem(LIKES_STORAGE_KEY, JSON.stringify([...ids]));
+  },
+  getLikedArray: () => {
+    return [...likeStore.getLikedIds()];
+  }
+};
 
 export const films = {
   list: (params = {}) => {

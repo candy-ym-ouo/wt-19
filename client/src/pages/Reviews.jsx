@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { reviews as reviewsApi, reports as reportsApi } from '../api.js';
+import { reviews as reviewsApi, reports as reportsApi, likeStore } from '../api.js';
 
 const moodColors = {
   '感动': 'bg-pink-500/20 text-pink-300',
@@ -24,7 +24,13 @@ export default function Reviews() {
   const [loading, setLoading] = useState(true);
   const [sort, setSort] = useState('created_at_desc');
   const [showSpoilers, setShowSpoilers] = useState({});
-  const [likedReviews, setLikedReviews] = useState({});
+  const [likedReviews, setLikedReviews] = useState(() => {
+    const liked = {};
+    likeStore.getLikedArray().forEach(id => {
+      liked[id] = true;
+    });
+    return liked;
+  });
   const [showReportModal, setShowReportModal] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
 
@@ -43,17 +49,35 @@ export default function Reviews() {
   };
 
   const handleLike = async (reviewId) => {
-    if (likedReviews[reviewId]) return;
+    if (likeStore.isLiked(reviewId)) return;
     try {
       const res = await reviewsApi.like(reviewId);
+      likeStore.addLike(reviewId);
       setLikedReviews(prev => ({ ...prev, [reviewId]: true }));
       setList(prev => prev.map(r =>
         r.id === reviewId ? { ...r, likes: res.likes } : r
       ));
+      window.dispatchEvent(new CustomEvent('reviewLikeUpdated'));
     } catch (err) {
       alert(err.message);
     }
   };
+
+  useEffect(() => {
+    const syncLikes = () => {
+      const liked = {};
+      likeStore.getLikedArray().forEach(id => {
+        liked[id] = true;
+      });
+      setLikedReviews(liked);
+    };
+    window.addEventListener('reviewLikeUpdated', syncLikes);
+    window.addEventListener('storage', syncLikes);
+    return () => {
+      window.removeEventListener('reviewLikeUpdated', syncLikes);
+      window.removeEventListener('storage', syncLikes);
+    };
+  }, []);
 
   const handleDelete = async (id) => {
     if (!confirm('确定删除此短评？')) return;
