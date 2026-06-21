@@ -134,6 +134,63 @@ app.delete('/api/films/:id', (req, res) => {
 
 // ============ 放映日历 API ============
 
+function timeToMinutes(t) {
+  if (!t) return 0;
+  const [h, m] = String(t).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function minutesToTime(mins) {
+  const h = Math.floor((mins % 1440) / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+function findOverlapConflicts(db, venueId, date, startTime, durationMinutes, excludeScreeningId = null) {
+  if (!venueId || !date || !startTime) return [];
+  const duration = Number(durationMinutes) || 0;
+  const startMin = timeToMinutes(startTime);
+  const endMin = startMin + duration;
+
+  let sql = `
+    SELECT s.*, f.title, f.duration as film_duration, v.name as venue_name, v.location as venue_location
+    FROM screenings s
+    LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
+    WHERE s.venue_id = ? AND s.screening_date = ?
+  `;
+  const params = [venueId, date];
+  if (excludeScreeningId) {
+    sql += ' AND s.id != ?';
+    params.push(excludeScreeningId);
+  }
+  const rows = db.prepare(sql).all(...params);
+
+  const conflicts = [];
+  rows.forEach(r => {
+    const rDuration = Number(r.film_duration) || 0;
+    const rStartMin = timeToMinutes(r.screening_time);
+    const rEndMin = rStartMin + rDuration;
+    if (startMin < rEndMin && endMin > rStartMin) {
+      conflicts.push({
+        id: r.id,
+        film_id: r.film_id,
+        title: r.title,
+        venue_id: r.venue_id,
+        venue_name: r.venue_name,
+        venue_location: r.venue_location,
+        screening_date: r.screening_date,
+        start_time: r.screening_time,
+        end_time: minutesToTime(rEndMin),
+        duration: rDuration,
+        overlap_start: minutesToTime(Math.max(startMin, rStartMin)),
+        overlap_end: minutesToTime(Math.min(endMin, rEndMin))
+      });
+    }
+  });
+  return conflicts;
+}
+
 // ============ 场馆 API ============
 
 app.get('/api/venues', (req, res) => {
@@ -266,21 +323,27 @@ app.post('/api/screenings', (req, res) => {
     return res.status(400).json({ error: '影片、日期和时间不能为空' });
   }
 
+  let filmDuration = 0;
+  const film = db.prepare('SELECT duration, title FROM films WHERE id = ?').get(film_id);
+  if (!film) {
+    return res.status(400).json({ error: '所选影片不存在' });
+  }
+  filmDuration = Number(film.duration) || 0;
+
+  let venueInfo = null;
   if (venue_id) {
-    const venueExists = db.prepare('SELECT id, name, location FROM venues WHERE id = ?').get(venue_id);
-    if (!venueExists) {
+    venueInfo = db.prepare('SELECT id, name, location FROM venues WHERE id = ?').get(venue_id);
+    if (!venueInfo) {
       return res.status(400).json({ error: '所选场馆不存在' });
     }
-    const conflictSql = `
-      SELECT s.*, f.title FROM screenings s
-      LEFT JOIN films f ON s.film_id = f.id
-      WHERE s.venue_id = ? AND s.screening_date = ? AND s.screening_time = ?
-    `;
-    const conflict = db.prepare(conflictSql).get(venue_id, screening_date, screening_time);
-    if (conflict) {
+    const conflicts = findOverlapConflicts(db, venue_id, screening_date, screening_time, filmDuration);
+    if (conflicts.length > 0) {
+      const first = conflicts[0];
+      const details = conflicts.map(c =>
+        `《${c.title}》(${c.start_time}-${c.end_time}`).join('、');
       return res.status(409).json({
-        error: `时间冲突：该场馆在 ${screening_date} ${screening_time} 已有「${conflict.title}」排期`,
-        conflict: conflict
+        error: `排期冲突：场馆「${venueInfo.name}${venueInfo.location ? ' · ' + venueInfo.location : ''}」在 ${screening_date} 存在时间重叠场次：${details}。重叠时段 ${first.overlap_start}-${first.overlap_end}`,
+        conflicts
       });
     }
   }
@@ -340,21 +403,27 @@ app.put('/api/screenings/:id', (req, res) => {
   const finalDate = screening_date || existing.screening_date;
   const finalTime = screening_time || existing.screening_time;
 
+  let filmDuration = 0;
+  const film = db.prepare('SELECT duration, title FROM films WHERE id = ?').get(finalFilmId);
+  if (!film) {
+    return res.status(400).json({ error: '所选影片不存在' });
+  }
+  filmDuration = Number(film.duration) || 0;
+
+  let venueInfo = null;
   if (finalVenueId) {
-    const venueExists = db.prepare('SELECT id, name, location FROM venues WHERE id = ?').get(finalVenueId);
-    if (!venueExists) {
+    venueInfo = db.prepare('SELECT id, name, location FROM venues WHERE id = ?').get(finalVenueId);
+    if (!venueInfo) {
       return res.status(400).json({ error: '所选场馆不存在' });
     }
-    const conflictSql = `
-      SELECT s.*, f.title FROM screenings s
-      LEFT JOIN films f ON s.film_id = f.id
-      WHERE s.venue_id = ? AND s.screening_date = ? AND s.screening_time = ? AND s.id != ?
-    `;
-    const conflict = db.prepare(conflictSql).get(finalVenueId, finalDate, finalTime, req.params.id);
-    if (conflict) {
+    const conflicts = findOverlapConflicts(db, finalVenueId, finalDate, finalTime, filmDuration, req.params.id);
+    if (conflicts.length > 0) {
+      const first = conflicts[0];
+      const details = conflicts.map(c =>
+        `《${c.title}》(${c.start_time}-${c.end_time}`).join('、');
       return res.status(409).json({
-        error: `时间冲突：该场馆在 ${finalDate} ${finalTime} 已有「${conflict.title}」排期`,
-        conflict: conflict
+        error: `排期冲突：场馆「${venueInfo.name}${venueInfo.location ? ' · ' + venueInfo.location : ''}」在 ${finalDate} 存在时间重叠场次：${details}。重叠时段 ${first.overlap_start}-${first.overlap_end}`,
+        conflicts
       });
     }
   }
@@ -389,8 +458,6 @@ app.put('/api/screenings/:id', (req, res) => {
     change_description !== undefined ? change_description : existing.change_description,
     req.params.id
   );
-
-  const film = db.prepare('SELECT title FROM films WHERE id = ?').get(finalFilmId);
 
   if (oldStatus !== 'on_sale' && newStatus === 'on_sale') {
     const favsWithReminder = db.prepare('SELECT film_id FROM favorites WHERE film_id = ? AND ticket_reminder_enabled = 1').all(finalFilmId);

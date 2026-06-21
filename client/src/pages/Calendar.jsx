@@ -10,6 +10,7 @@ export default function Calendar() {
   const [view, setView] = useState('month');
   const [currentDate, setCurrentDate] = useState(new Date());
   const [showAdd, setShowAdd] = useState(false);
+  const [addConflictError, setAddConflictError] = useState(null);
   const [addForm, setAddForm] = useState({
     film_id: '', venue_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
     ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
@@ -54,6 +55,7 @@ export default function Calendar() {
 
   const handleAdd = async (e) => {
     e.preventDefault();
+    setAddConflictError(null);
     if (!addForm.film_id || !addForm.screening_date || !addForm.screening_time) {
       alert('请选择影片、日期和时间');
       return;
@@ -65,13 +67,18 @@ export default function Calendar() {
         is_changed: addForm.is_changed ? 1 : 0
       });
       setShowAdd(false);
+      setAddConflictError(null);
       setAddForm({
         film_id: '', venue_id: '', screening_date: '', screening_time: '', venue: '', location: '', notes: '',
         ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
       });
       fetchData();
     } catch (err) {
-      alert(err.message);
+      if (err.status === 409 && err.data && err.data.conflicts) {
+        setAddConflictError({ message: err.message, conflicts: err.data.conflicts });
+      } else {
+        alert(err.message);
+      }
     }
   };
 
@@ -127,7 +134,33 @@ export default function Calendar() {
       {showAdd && (
         <div className="mb-8 p-6 bg-film-dark rounded-xl border border-film-gray/50">
           <h3 className="text-lg font-semibold mb-5">添加放映场次</h3>
-          <form onSubmit={handleAdd} className="grid md:grid-cols-3 gap-4">
+          <form onSubmit={handleAdd} className="space-y-4">
+            {addConflictError && (
+              <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-red-400 text-lg mt-0.5">⚠️</span>
+                  <div className="flex-1">
+                    <p className="text-red-400 font-medium mb-2">排期时间冲突</p>
+                    <p className="text-sm text-film-cream/80 mb-3">{addConflictError.message}</p>
+                    <div className="space-y-1.5">
+                      {addConflictError.conflicts.map((c, idx) => (
+                        <div key={idx} className="flex flex-wrap items-center gap-2 text-xs text-film-cream/70 bg-film-black/40 rounded-lg px-3 py-2">
+                          <span className="font-semibold text-red-300">🎬《{c.title}》</span>
+                          <span className="text-film-cream/50">|</span>
+                          <span>🏛 {c.venue_name}{c.venue_location ? ` · ${c.venue_location}` : ''}</span>
+                          <span className="text-film-cream/50">|</span>
+                          <span>🕒 {c.start_time} - {c.end_time}</span>
+                          {c.duration > 0 && <span className="text-film-cream/50">（{c.duration} 分钟）</span>}
+                          <span className="text-film-cream/50">|</span>
+                          <span className="text-red-300 font-medium">重叠 {c.overlap_start} - {c.overlap_end}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            <div className="grid md:grid-cols-3 gap-4">
             <div className="md:col-span-3">
               <label className="text-xs text-film-cream/60 mb-1.5 block">选择影片 *</label>
               <select

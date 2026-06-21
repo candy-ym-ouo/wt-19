@@ -51,6 +51,7 @@ export default function Admin() {
   const [venueForm, setVenueForm] = useState(emptyVenue);
   const [collectionForm, setCollectionForm] = useState(emptyCollection);
   const [addFilmForm, setAddFilmForm] = useState({ film_id: '', sort_order: 0, note: '' });
+  const [screeningConflictError, setScreeningConflictError] = useState(null);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -99,6 +100,7 @@ export default function Admin() {
   const openNewScreening = () => {
     setEditingScreening(null);
     setScreeningForm(emptyScreening);
+    setScreeningConflictError(null);
     setShowScreeningForm(true);
   };
 
@@ -117,6 +119,7 @@ export default function Admin() {
       is_changed: s.is_changed || 0,
       change_description: s.change_description || ''
     });
+    setScreeningConflictError(null);
     setShowScreeningForm(true);
   };
 
@@ -214,6 +217,7 @@ export default function Admin() {
 
   const handleScreeningSubmit = async (e) => {
     e.preventDefault();
+    setScreeningConflictError(null);
     if (!screeningForm.film_id || !screeningForm.screening_date || !screeningForm.screening_time) {
       alert('请选择影片、日期和时间');
       return;
@@ -234,7 +238,11 @@ export default function Admin() {
       setScreeningForm(emptyScreening);
       fetchAll();
     } catch (err) {
-      alert(err.message);
+      if (err.status === 409 && err.data && err.data.conflicts) {
+        setScreeningConflictError({ message: err.message, conflicts: err.data.conflicts });
+      } else {
+        alert(err.message);
+      }
     }
   };
 
@@ -1263,6 +1271,31 @@ export default function Admin() {
               </button>
             </div>
             <form onSubmit={handleScreeningSubmit} className="p-5 space-y-4">
+              {screeningConflictError && (
+                <div className="rounded-xl border border-red-500/50 bg-red-500/10 p-4">
+                  <div className="flex items-start gap-3">
+                    <span className="text-red-400 text-lg mt-0.5">⚠️</span>
+                    <div className="flex-1">
+                      <p className="text-red-400 font-medium mb-2">排期时间冲突</p>
+                      <p className="text-sm text-film-cream/80 mb-3">{screeningConflictError.message}</p>
+                      <div className="space-y-1.5">
+                        {screeningConflictError.conflicts.map((c, idx) => (
+                          <div key={idx} className="flex flex-wrap items-center gap-2 text-xs text-film-cream/70 bg-film-black/40 rounded-lg px-3 py-2">
+                            <span className="font-semibold text-red-300">🎬《{c.title}》</span>
+                            <span className="text-film-cream/50">|</span>
+                            <span>🏛 {c.venue_name}{c.venue_location ? ` · ${c.venue_location}` : ''}</span>
+                            <span className="text-film-cream/50">|</span>
+                            <span>🕒 {c.start_time} - {c.end_time}</span>
+                            {c.duration > 0 && <span className="text-film-cream/50">（{c.duration} 分钟）</span>}
+                            <span className="text-film-cream/50">|</span>
+                            <span className="text-red-300 font-medium">重叠 {c.overlap_start} - {c.overlap_end}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
               <div className="grid md:grid-cols-3 gap-4">
                 <div className="md:col-span-3">
                   <label className="text-xs text-film-cream/60 mb-1.5 block">选择影片 *</label>
