@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi } from '../api.js';
+import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi } from '../api.js';
 
 const emptyFilm = {
   title: '', original_title: '', director: '', year: '', country: '',
@@ -12,6 +12,12 @@ const emptyScreening = {
   ticket_status: 'not_open', ticket_open_date: '', is_changed: 0, change_description: ''
 };
 
+const emptyCollection = {
+  title: '', subtitle: '', description: '', cover_image: '',
+  type: 'custom', filter_director: '', filter_country: '', filter_theme: '',
+  sort_order: 0, is_featured: 0, is_active: 1
+};
+
 export default function Admin() {
   const [activeTab, setActiveTab] = useState('overview');
   const [stats, setStats] = useState(null);
@@ -21,20 +27,27 @@ export default function Admin() {
   const [notificationList, setNotificationList] = useState([]);
   const [favoriteList, setFavoriteList] = useState([]);
   const [reportList, setReportList] = useState([]);
+  const [collectionList, setCollectionList] = useState([]);
+  const [activeCollection, setActiveCollection] = useState(null);
   const [reportFilter, setReportFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [showFilmForm, setShowFilmForm] = useState(false);
   const [showScreeningForm, setShowScreeningForm] = useState(false);
+  const [showCollectionForm, setShowCollectionForm] = useState(false);
+  const [showAddFilmToCollection, setShowAddFilmToCollection] = useState(null);
   const [editingFilm, setEditingFilm] = useState(null);
   const [editingScreening, setEditingScreening] = useState(null);
+  const [editingCollection, setEditingCollection] = useState(null);
   const [filmForm, setFilmForm] = useState(emptyFilm);
   const [screeningForm, setScreeningForm] = useState(emptyScreening);
+  const [collectionForm, setCollectionForm] = useState(emptyCollection);
+  const [addFilmForm, setAddFilmForm] = useState({ film_id: '', sort_order: 0, note: '' });
 
   const fetchAll = async () => {
     setLoading(true);
-    const [s, f, sc, r, n, fav, rp] = await Promise.all([
+    const [s, f, sc, r, n, fav, rp, cols] = await Promise.all([
       statsApi.get(), filmsApi.list(), screeningsApi.list(), reviewsApi.list({ include_hidden: 1 }),
-      notifApi.list(), favApi.list(), reportsApi.list()
+      notifApi.list(), favApi.list(), reportsApi.list(), collectionsApi.list({ active: 0 })
     ]);
     setStats(s);
     setFilmList(f);
@@ -43,6 +56,7 @@ export default function Admin() {
     setNotificationList(n);
     setFavoriteList(fav);
     setReportList(rp);
+    setCollectionList(cols);
     setLoading(false);
   };
 
@@ -219,8 +233,112 @@ export default function Admin() {
     }
   };
 
+  const openNewCollection = () => {
+    setEditingCollection(null);
+    setCollectionForm(emptyCollection);
+    setShowCollectionForm(true);
+  };
+
+  const openEditCollection = (col) => {
+    setEditingCollection(col);
+    setCollectionForm({
+      title: col.title || '',
+      subtitle: col.subtitle || '',
+      description: col.description || '',
+      cover_image: col.cover_image || '',
+      type: col.type || 'custom',
+      filter_director: col.filter_director || '',
+      filter_country: col.filter_country || '',
+      filter_theme: col.filter_theme || '',
+      sort_order: col.sort_order || 0,
+      is_featured: col.is_featured || 0,
+      is_active: col.is_active !== undefined ? col.is_active : 1,
+    });
+    setShowCollectionForm(true);
+  };
+
+  const handleCollectionSubmit = async (e) => {
+    e.preventDefault();
+    if (!collectionForm.title.trim()) {
+      alert('请填写专题标题');
+      return;
+    }
+    try {
+      const data = {
+        ...collectionForm,
+        sort_order: parseInt(collectionForm.sort_order) || 0,
+        is_featured: collectionForm.is_featured ? 1 : 0,
+        is_active: collectionForm.is_active ? 1 : 0,
+      };
+      if (editingCollection) {
+        await collectionsApi.update(editingCollection.id, data);
+      } else {
+        await collectionsApi.create(data);
+      }
+      setShowCollectionForm(false);
+      setEditingCollection(null);
+      setCollectionForm(emptyCollection);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteCollection = async (id) => {
+    if (!confirm('确定删除此专题？专题内的影片关联也会被删除。')) return;
+    try {
+      await collectionsApi.delete(id);
+      if (activeCollection?.id === id) setActiveCollection(null);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleOpenCollection = async (col) => {
+    try {
+      const detail = await collectionsApi.get(col.id);
+      setActiveCollection(detail);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleAddFilmToCollection = async (e) => {
+    e.preventDefault();
+    if (!addFilmForm.film_id) {
+      alert('请选择影片');
+      return;
+    }
+    try {
+      await collectionsApi.addFilm(activeCollection.id, {
+        film_id: addFilmForm.film_id,
+        sort_order: parseInt(addFilmForm.sort_order) || 0,
+        note: addFilmForm.note || null,
+      });
+      setShowAddFilmToCollection(null);
+      setAddFilmForm({ film_id: '', sort_order: 0, note: '' });
+      handleOpenCollection(activeCollection);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleRemoveFilmFromCollection = async (filmId) => {
+    if (!confirm('确定从专题中移除此影片？')) return;
+    try {
+      await collectionsApi.removeFilm(activeCollection.id, filmId);
+      handleOpenCollection(activeCollection);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const tabs = [
     { key: 'overview', label: '总览', icon: '📊' },
+    { key: 'collections', label: '专题策展', icon: '📚' },
     { key: 'films', label: '影片管理', icon: '🎬' },
     { key: 'screenings', label: '放映场次', icon: '📅' },
     { key: 'reviews', label: '短评管理', icon: '✍️' },
@@ -257,9 +375,10 @@ export default function Admin() {
 
       {activeTab === 'overview' && stats && (
         <div>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-7 gap-4 mb-10">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 mb-10">
             {[
               { label: '影片总数', value: stats.filmCount, icon: '🎬', color: 'from-film-gold/20 to-film-gold/5' },
+              { label: '专题总数', value: stats.collectionCount || 0, icon: '📚', color: 'from-indigo-500/20 to-indigo-500/5' },
               { label: '放映场次', value: stats.screeningCount, icon: '📅', color: 'from-blue-500/20 to-blue-500/5' },
               { label: '短评数量', value: stats.reviewCount, icon: '✍️', color: 'from-pink-500/20 to-pink-500/5' },
               { label: '收藏数量', value: stats.favoriteCount, icon: '❤️', color: 'from-red-500/20 to-red-500/5' },
@@ -351,6 +470,165 @@ export default function Admin() {
               )}
             </div>
           </div>
+        </div>
+      )}
+
+      {activeTab === 'collections' && (
+        <div>
+          {!activeCollection ? (
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                <p className="text-film-cream/60">共 {collectionList.length} 个专题</p>
+                <button
+                  onClick={openNewCollection}
+                  className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+                >
+                  + 新建专题
+                </button>
+              </div>
+
+              {collectionList.length === 0 ? (
+                <div className="py-16 text-center border border-dashed border-film-gray rounded-xl">
+                  <p className="text-film-cream/50">暂无专题，点击上方按钮创建</p>
+                </div>
+              ) : (
+                <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {collectionList.map(col => (
+                    <div key={col.id} className="group bg-film-dark/50 rounded-xl border border-film-gray/50 p-5 hover:border-film-gold/30 transition-colors">
+                      <div className="flex items-start justify-between gap-3 mb-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`text-xs px-2 py-0.5 rounded-full ${
+                              col.type === 'director' ? 'bg-purple-500/20 text-purple-400' :
+                              col.type === 'country' ? 'bg-blue-500/20 text-blue-400' :
+                              col.type === 'theme' ? 'bg-pink-500/20 text-pink-400' :
+                              'bg-film-gold/20 text-film-gold'
+                            }`}>
+                              {col.type === 'director' ? '导演' : col.type === 'country' ? '地区' : col.type === 'theme' ? '主题' : '自定义'}
+                            </span>
+                            {col.is_featured && <span className="text-xs text-film-gold">⭐ 首页推荐</span>}
+                            {!col.is_active && <span className="text-xs text-film-cream/40">已下架</span>}
+                          </div>
+                          <h3 className="font-semibold text-film-cream truncate">{col.title}</h3>
+                          {col.subtitle && <p className="text-xs text-film-cream/50 italic truncate">{col.subtitle}</p>}
+                        </div>
+                      </div>
+                      {col.description && (
+                        <p className="text-sm text-film-cream/60 line-clamp-2 mb-3">{col.description}</p>
+                      )}
+                      <div className="flex items-center justify-between text-xs text-film-cream/50 mb-4">
+                        <span>📽 {col.film_count || 0} 部影片</span>
+                        <span>排序: {col.sort_order}</span>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleOpenCollection(col)}
+                          className="flex-1 text-sm px-3 py-1.5 bg-film-gold/10 text-film-gold rounded-lg hover:bg-film-gold/20 transition-colors"
+                        >
+                          编排影片
+                        </button>
+                        <button
+                          onClick={() => openEditCollection(col)}
+                          className="text-sm px-3 py-1.5 text-film-cream/60 hover:text-film-cream rounded-lg hover:bg-film-gray/50 transition-colors"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          onClick={() => handleDeleteCollection(col.id)}
+                          className="text-sm px-3 py-1.5 text-film-cream/60 hover:text-film-red rounded-lg hover:bg-film-red/10 transition-colors"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <div className="flex items-center justify-between mb-6">
+                <div>
+                  <button
+                    onClick={() => setActiveCollection(null)}
+                    className="text-sm text-film-gold hover:underline mb-2 inline-block"
+                  >
+                    ← 返回专题列表
+                  </button>
+                  <h2 className="text-2xl font-serif font-bold">{activeCollection.title}</h2>
+                  <p className="text-film-cream/60 mt-1">已收录 {activeCollection.films?.length || 0} 部影片</p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowAddFilmToCollection(true);
+                    setAddFilmForm({ film_id: '', sort_order: (activeCollection.films?.length || 0) + 1, note: '' });
+                  }}
+                  className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+                >
+                  + 添加影片
+                </button>
+              </div>
+
+              {activeCollection.films?.length === 0 ? (
+                <div className="py-16 text-center border border-dashed border-film-gray rounded-xl">
+                  <p className="text-film-cream/50 mb-4">该专题暂未收录影片</p>
+                  <button
+                    onClick={() => {
+                      setShowAddFilmToCollection(true);
+                      setAddFilmForm({ film_id: '', sort_order: 1, note: '' });
+                    }}
+                    className="text-film-gold hover:underline"
+                  >
+                    立即添加
+                  </button>
+                </div>
+              ) : (
+                <div className="bg-film-dark/50 rounded-xl border border-film-gray/50 overflow-hidden">
+                  <table className="w-full text-sm">
+                    <thead className="bg-film-black/50 text-film-cream/60">
+                      <tr>
+                        <th className="text-left p-4 font-medium w-16">序号</th>
+                        <th className="text-left p-4 font-medium">影片</th>
+                        <th className="text-left p-4 font-medium hidden md:table-cell">导演</th>
+                        <th className="text-left p-4 font-medium hidden lg:table-cell">备注</th>
+                        <th className="text-right p-4 font-medium">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {activeCollection.films.map((f, idx) => (
+                        <tr key={f.id || f.film_id} className="border-t border-film-gray/30 hover:bg-film-black/30">
+                          <td className="p-4 text-film-gold font-mono">{String(idx + 1).padStart(2, '0')}</td>
+                          <td className="p-4">
+                            <div className="flex items-center gap-3">
+                              <div className="w-8 h-11 bg-film-gray rounded overflow-hidden flex-shrink-0">
+                                {f.poster && <img src={f.poster} alt="" className="w-full h-full object-cover" />}
+                              </div>
+                              <div>
+                                <Link to={`/films/${f.film_id}`} className="font-medium text-film-cream hover:text-film-gold">
+                                  {f.title}
+                                </Link>
+                                {f.year && <span className="text-xs text-film-cream/40 ml-2">({f.year})</span>}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-4 text-film-cream/70 hidden md:table-cell">{f.director || '-'}</td>
+                          <td className="p-4 text-film-cream/70 hidden lg:table-cell max-w-xs truncate">{f.note || '-'}</td>
+                          <td className="p-4 text-right">
+                            <button
+                              onClick={() => handleRemoveFilmFromCollection(f.film_id)}
+                              className="text-film-cream/60 hover:text-film-red px-3 py-1 rounded transition-colors text-sm"
+                            >
+                              移除
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -1025,6 +1303,228 @@ export default function Admin() {
                   className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
                 >
                   {editingFilm ? '保存修改' : '添加影片'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showCollectionForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowCollectionForm(false)}>
+          <div className="bg-film-dark w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-film-gray" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-film-dark border-b border-film-gray/50 p-5 flex items-center justify-between">
+              <h2 className="text-xl font-serif font-bold">{editingCollection ? '编辑专题' : '新建专题'}</h2>
+              <button
+                onClick={() => setShowCollectionForm(false)}
+                className="p-2 rounded-lg hover:bg-film-gray transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleCollectionSubmit} className="p-5 space-y-4">
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">专题标题 *</label>
+                  <input
+                    type="text"
+                    value={collectionForm.title}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, title: e.target.value })}
+                    required
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">副标题</label>
+                  <input
+                    type="text"
+                    value={collectionForm.subtitle}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, subtitle: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">专题描述</label>
+                  <textarea
+                    value={collectionForm.description}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, description: e.target.value })}
+                    rows={3}
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">专题类型</label>
+                  <select
+                    value={collectionForm.type}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, type: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  >
+                    <option value="custom">自定义专题</option>
+                    <option value="director">导演专题</option>
+                    <option value="country">地区专题</option>
+                    <option value="theme">主题专题</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">排序权重（数值越小越靠前）</label>
+                  <input
+                    type="number"
+                    value={collectionForm.sort_order}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, sort_order: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">封面图片 URL</label>
+                  <input
+                    type="url"
+                    value={collectionForm.cover_image}
+                    onChange={(e) => setCollectionForm({ ...collectionForm, cover_image: e.target.value })}
+                    placeholder="https://..."
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                {collectionForm.type === 'director' && (
+                  <div>
+                    <label className="text-xs text-film-cream/60 mb-1.5 block">筛选导演</label>
+                    <input
+                      type="text"
+                      value={collectionForm.filter_director}
+                      onChange={(e) => setCollectionForm({ ...collectionForm, filter_director: e.target.value })}
+                      placeholder="如 王家卫"
+                      className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                    />
+                  </div>
+                )}
+                {collectionForm.type === 'country' && (
+                  <div>
+                    <label className="text-xs text-film-cream/60 mb-1.5 block">筛选国家/地区</label>
+                    <input
+                      type="text"
+                      value={collectionForm.filter_country}
+                      onChange={(e) => setCollectionForm({ ...collectionForm, filter_country: e.target.value })}
+                      placeholder="如 日本"
+                      className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                    />
+                  </div>
+                )}
+                {collectionForm.type === 'theme' && (
+                  <div>
+                    <label className="text-xs text-film-cream/60 mb-1.5 block">筛选主题</label>
+                    <input
+                      type="text"
+                      value={collectionForm.filter_theme}
+                      onChange={(e) => setCollectionForm({ ...collectionForm, filter_theme: e.target.value })}
+                      placeholder="如 诗意"
+                      className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                    />
+                  </div>
+                )}
+                <div className="flex items-end gap-6 md:col-span-2 pt-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!collectionForm.is_featured}
+                      onChange={(e) => setCollectionForm({ ...collectionForm, is_featured: e.target.checked ? 1 : 0 })}
+                      className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
+                    />
+                    <span className="text-sm text-film-cream/80">⭐ 首页推荐</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!collectionForm.is_active}
+                      onChange={(e) => setCollectionForm({ ...collectionForm, is_active: e.target.checked ? 1 : 0 })}
+                      className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
+                    />
+                    <span className="text-sm text-film-cream/80">启用中</span>
+                  </label>
+                </div>
+              </div>
+              <div className="flex justify-end gap-3 pt-4 border-t border-film-gray/50">
+                <button
+                  type="button"
+                  onClick={() => setShowCollectionForm(false)}
+                  className="px-5 py-2.5 rounded-lg text-film-cream/60 hover:text-film-cream transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
+                >
+                  {editingCollection ? '保存修改' : '创建专题'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showAddFilmToCollection && activeCollection && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowAddFilmToCollection(null)}>
+          <div className="bg-film-dark w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-film-gray" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-film-dark border-b border-film-gray/50 p-5 flex items-center justify-between">
+              <h2 className="text-xl font-serif font-bold">添加影片到「{activeCollection.title}」</h2>
+              <button
+                onClick={() => setShowAddFilmToCollection(null)}
+                className="p-2 rounded-lg hover:bg-film-gray transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleAddFilmToCollection} className="p-5 space-y-4">
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">选择影片 *</label>
+                <select
+                  value={addFilmForm.film_id}
+                  onChange={(e) => setAddFilmForm({ ...addFilmForm, film_id: e.target.value })}
+                  className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                >
+                  <option value="">请选择影片</option>
+                  {filmList
+                    .filter(f => !activeCollection.films?.some(cf => String(cf.film_id) === String(f.id)))
+                    .map(f => (
+                    <option key={f.id} value={f.id}>{f.title} ({f.year || '未知年份'}) - {f.director || '未知导演'}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">排序</label>
+                <input
+                  type="number"
+                  value={addFilmForm.sort_order}
+                  onChange={(e) => setAddFilmForm({ ...addFilmForm, sort_order: e.target.value })}
+                  className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">备注说明</label>
+                <textarea
+                  value={addFilmForm.note}
+                  onChange={(e) => setAddFilmForm({ ...addFilmForm, note: e.target.value })}
+                  rows={2}
+                  placeholder="如 推荐理由、入册说明等"
+                  className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-4 border-t border-film-gray/50">
+                <button
+                  type="button"
+                  onClick={() => setShowAddFilmToCollection(null)}
+                  className="px-5 py-2.5 rounded-lg text-film-cream/60 hover:text-film-cream transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
+                >
+                  添加
                 </button>
               </div>
             </form>

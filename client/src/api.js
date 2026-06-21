@@ -103,3 +103,20 @@ export const notifications = {
 export const stats = {
   get: () => request('/stats'),
 };
+
+export const collections = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/collections${qs ? '?' + qs : ''}`);
+  },
+  get: (id) => request(`/collections/${id}`),
+  create: (data) => request('/collections', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id, data) => request(`/collections/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id) => request(`/collections/${id}`, { method: 'DELETE' }),
+  addFilm: (id, data) => request(`/collections/${id}/films`, { method: 'POST', body: JSON.stringify(data) }),
+  updateFilm: (id, filmId, data) => request(`/collections/${id}/films/${filmId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  removeFilm: (id, filmId) => request(`/collections/${id}/films/${filmId}`, { method: 'DELETE' }),
+  getDirectors: () => request('/collections/aggregate/directors'),
+  getCountries: () => request('/collections/aggregate/countries'),
+  getThemes: () => request('/collections/aggregate/themes'),
+};

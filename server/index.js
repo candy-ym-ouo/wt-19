@@ -502,6 +502,248 @@ app.delete('/api/notifications/:id', (req, res) => {
   res.json({ message: '已删除通知' });
 });
 
+// ============ 专题策展 API ============
+
+app.get('/api/collections', (req, res) => {
+  const { type, featured, active = 1 } = req.query;
+  let sql = `
+    SELECT c.*, COUNT(cf.id) as film_count
+    FROM collections c
+    LEFT JOIN collection_films cf ON c.id = cf.collection_id
+    WHERE 1=1
+  `;
+  const params = [];
+
+  if (type) {
+    sql += ' AND c.type = ?';
+    params.push(type);
+  }
+  if (featured) {
+    sql += ' AND c.is_featured = 1';
+  }
+  if (active) {
+    sql += ' AND c.is_active = 1';
+  }
+
+  sql += ' GROUP BY c.id ORDER BY c.sort_order ASC, c.created_at DESC';
+
+  const collections = db.prepare(sql).all(...params);
+  res.json(collections);
+});
+
+app.get('/api/collections/:id', (req, res) => {
+  const collection = db.prepare('SELECT * FROM collections WHERE id = ?').get(req.params.id);
+  if (!collection) {
+    return res.status(404).json({ error: '专题不存在' });
+  }
+
+  const films = db.prepare(`
+    SELECT cf.*, f.title, f.original_title, f.director, f.year, f.country, f.genre, f.poster, f.rating, f.synopsis
+    FROM collection_films cf
+    LEFT JOIN films f ON cf.film_id = f.id
+    WHERE cf.collection_id = ?
+    ORDER BY cf.sort_order ASC, cf.created_at ASC
+  `).all(req.params.id);
+
+  res.json({ ...collection, films });
+});
+
+app.post('/api/collections', (req, res) => {
+  const {
+    title, subtitle, description, cover_image, type = 'custom',
+    filter_director, filter_country, filter_theme,
+    sort_order = 0, is_featured = 0, is_active = 1
+  } = req.body;
+
+  if (!title) {
+    return res.status(400).json({ error: '专题标题不能为空' });
+  }
+  if (!['custom', 'director', 'country', 'theme'].includes(type)) {
+    return res.status(400).json({ error: '无效的专题类型' });
+  }
+
+  const info = db.prepare(`
+    INSERT INTO collections (title, subtitle, description, cover_image, type, filter_director, filter_country, filter_theme, sort_order, is_featured, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    title, subtitle || null, description || null, cover_image || null, type,
+    filter_director || null, filter_country || null, filter_theme || null,
+    sort_order, is_featured ? 1 : 0, is_active ? 1 : 0
+  );
+
+  const collection = db.prepare('SELECT * FROM collections WHERE id = ?').get(info.lastInsertRowid);
+  res.status(201).json(collection);
+});
+
+app.put('/api/collections/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM collections WHERE id = ?').get(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: '专题不存在' });
+  }
+
+  const {
+    title, subtitle, description, cover_image, type,
+    filter_director, filter_country, filter_theme,
+    sort_order, is_featured, is_active
+  } = req.body;
+
+  if (type && !['custom', 'director', 'country', 'theme'].includes(type)) {
+    return res.status(400).json({ error: '无效的专题类型' });
+  }
+
+  db.prepare(`
+    UPDATE collections SET
+      title = ?, subtitle = ?, description = ?, cover_image = ?, type = ?,
+      filter_director = ?, filter_country = ?, filter_theme = ?,
+      sort_order = ?, is_featured = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    title !== undefined ? title : existing.title,
+    subtitle !== undefined ? subtitle : existing.subtitle,
+    description !== undefined ? description : existing.description,
+    cover_image !== undefined ? cover_image : existing.cover_image,
+    type !== undefined ? type : existing.type,
+    filter_director !== undefined ? filter_director : existing.filter_director,
+    filter_country !== undefined ? filter_country : existing.filter_country,
+    filter_theme !== undefined ? filter_theme : existing.filter_theme,
+    sort_order !== undefined ? sort_order : existing.sort_order,
+    is_featured !== undefined ? (is_featured ? 1 : 0) : existing.is_featured,
+    is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+    req.params.id
+  );
+
+  const collection = db.prepare('SELECT * FROM collections WHERE id = ?').get(req.params.id);
+  res.json(collection);
+});
+
+app.delete('/api/collections/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM collections WHERE id = ?').run(req.params.id);
+  if (info.changes === 0) {
+    return res.status(404).json({ error: '专题不存在' });
+  }
+  res.json({ message: '删除成功' });
+});
+
+app.post('/api/collections/:id/films', (req, res) => {
+  const { film_id, sort_order = 0, note } = req.body;
+  if (!film_id) {
+    return res.status(400).json({ error: '影片ID不能为空' });
+  }
+
+  const collection = db.prepare('SELECT * FROM collections WHERE id = ?').get(req.params.id);
+  if (!collection) {
+    return res.status(404).json({ error: '专题不存在' });
+  }
+
+  const film = db.prepare('SELECT * FROM films WHERE id = ?').get(film_id);
+  if (!film) {
+    return res.status(404).json({ error: '影片不存在' });
+  }
+
+  try {
+    const info = db.prepare(`
+      INSERT INTO collection_films (collection_id, film_id, sort_order, note)
+      VALUES (?, ?, ?, ?)
+    `).run(req.params.id, film_id, sort_order, note || null);
+
+    const item = db.prepare(`
+      SELECT cf.*, f.title, f.poster, f.director, f.year
+      FROM collection_films cf LEFT JOIN films f ON cf.film_id = f.id
+      WHERE cf.id = ?
+    `).get(info.lastInsertRowid);
+    res.status(201).json(item);
+  } catch (err) {
+    if (err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: '影片已在该专题中' });
+    }
+    throw err;
+  }
+});
+
+app.put('/api/collections/:id/films/:filmId', (req, res) => {
+  const { sort_order, note } = req.body;
+
+  const existing = db.prepare('SELECT * FROM collection_films WHERE collection_id = ? AND film_id = ?').get(req.params.id, req.params.filmId);
+  if (!existing) {
+    return res.status(404).json({ error: '影片不在该专题中' });
+  }
+
+  db.prepare(`
+    UPDATE collection_films SET sort_order = ?, note = ?
+    WHERE collection_id = ? AND film_id = ?
+  `).run(
+    sort_order !== undefined ? sort_order : existing.sort_order,
+    note !== undefined ? note : existing.note,
+    req.params.id, req.params.filmId
+  );
+
+  const item = db.prepare(`
+    SELECT cf.*, f.title, f.poster, f.director, f.year
+    FROM collection_films cf LEFT JOIN films f ON cf.film_id = f.id
+    WHERE cf.collection_id = ? AND cf.film_id = ?
+  `).get(req.params.id, req.params.filmId);
+  res.json(item);
+});
+
+app.delete('/api/collections/:id/films/:filmId', (req, res) => {
+  const info = db.prepare('DELETE FROM collection_films WHERE collection_id = ? AND film_id = ?').run(req.params.id, req.params.filmId);
+  if (info.changes === 0) {
+    return res.status(404).json({ error: '影片不在该专题中' });
+  }
+  res.json({ message: '已从专题中移除' });
+});
+
+app.get('/api/collections/aggregate/directors', (req, res) => {
+  const directors = db.prepare(`
+    SELECT 
+      director as name,
+      COUNT(*) as film_count,
+      AVG(rating) as avg_rating,
+      GROUP_CONCAT(DISTINCT country) as countries
+    FROM films 
+    WHERE director IS NOT NULL AND director != ''
+    GROUP BY director
+    ORDER BY film_count DESC, avg_rating DESC
+  `).all();
+  res.json(directors);
+});
+
+app.get('/api/collections/aggregate/countries', (req, res) => {
+  const countries = db.prepare(`
+    SELECT 
+      country as name,
+      COUNT(*) as film_count,
+      AVG(rating) as avg_rating
+    FROM films 
+    WHERE country IS NOT NULL AND country != ''
+    GROUP BY country
+    ORDER BY film_count DESC, avg_rating DESC
+  `).all();
+  res.json(countries);
+});
+
+app.get('/api/collections/aggregate/themes', (req, res) => {
+  const films = db.prepare('SELECT id, genre, synopsis FROM films WHERE genre IS NOT NULL OR synopsis IS NOT NULL').all();
+  const themeMap = new Map();
+
+  films.forEach(film => {
+    if (film.genre) {
+      film.genre.split(/[\/、,，]/).map(t => t.trim()).filter(t => t).forEach(theme => {
+        if (!themeMap.has(theme)) {
+          themeMap.set(theme, { name: theme, film_ids: new Set(), film_count: 0 });
+        }
+        themeMap.get(theme).film_ids.add(film.id);
+      });
+    }
+  });
+
+  const themes = Array.from(themeMap.values())
+    .map(t => ({ name: t.name, film_count: t.film_ids.size }))
+    .sort((a, b) => b.film_count - a.film_count);
+
+  res.json(themes);
+});
+
 // ============ 统计数据 API ============
 
 app.get('/api/stats', (req, res) => {
@@ -511,6 +753,8 @@ app.get('/api/stats', (req, res) => {
   const favoriteCount = db.prepare('SELECT COUNT(*) as count FROM favorites').get().count;
   const unreadNotificationCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE is_read = 0').get().count;
   const pendingReportCount = db.prepare('SELECT COUNT(*) as count FROM reports WHERE status = ?').get('pending').count;
+  const collectionCount = db.prepare('SELECT COUNT(*) as count FROM collections WHERE is_active = 1').get().count;
+  const featuredCollectionCount = db.prepare('SELECT COUNT(*) as count FROM collections WHERE is_featured = 1 AND is_active = 1').get().count;
 
   const upcomingScreenings = db.prepare(`
     SELECT s.*, f.title, f.poster
@@ -534,6 +778,16 @@ app.get('/api/stats', (req, res) => {
     LIMIT 5
   `).all();
 
+  const featuredCollections = db.prepare(`
+    SELECT c.*, COUNT(cf.id) as film_count
+    FROM collections c
+    LEFT JOIN collection_films cf ON c.id = cf.collection_id
+    WHERE c.is_featured = 1 AND c.is_active = 1
+    GROUP BY c.id
+    ORDER BY c.sort_order ASC, c.created_at DESC
+    LIMIT 5
+  `).all();
+
   res.json({
     filmCount,
     screeningCount,
@@ -541,9 +795,12 @@ app.get('/api/stats', (req, res) => {
     favoriteCount,
     unreadNotificationCount,
     pendingReportCount,
+    collectionCount,
+    featuredCollectionCount,
     upcomingScreenings,
     recentReviews,
-    recentNotifications
+    recentNotifications,
+    featuredCollections
   });
 });
 

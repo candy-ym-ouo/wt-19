@@ -1,12 +1,20 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films, stats, screenings } from '../api.js';
+import { films, stats, screenings, collections as collectionsApi } from '../api.js';
 import FilmCard from '../components/FilmCard.jsx';
+
+const typeLabels = {
+  director: '导演专题',
+  country: '地区专题',
+  theme: '主题专题',
+  custom: '精选专题',
+};
 
 export default function Home() {
   const [featuredFilms, setFeaturedFilms] = useState([]);
   const [statsData, setStatsData] = useState(null);
   const [upcoming, setUpcoming] = useState([]);
+  const [featuredCollections, setFeaturedCollections] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -14,11 +22,13 @@ export default function Home() {
       films.list({ sort: 'rating_desc' }).then(r => r.slice(0, 6)),
       stats.get(),
       screenings.list(),
-    ]).then(([f, s, sc]) => {
+      collectionsApi.list({ featured: 1 }),
+    ]).then(([f, s, sc, cols]) => {
       setFeaturedFilms(f);
       setStatsData(s);
       const today = new Date().toISOString().split('T')[0];
       setUpcoming(sc.filter(x => x.screening_date >= today).slice(0, 5));
+      setFeaturedCollections(cols.slice(0, 3));
       setLoading(false);
     });
   }, []);
@@ -57,9 +67,10 @@ export default function Home() {
             </div>
           </div>
           {statsData && (
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-16 max-w-2xl">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-6 mt-16 max-w-3xl">
               {[
-                { label: '收藏影片', value: statsData.filmCount },
+                { label: '收录影片', value: statsData.filmCount },
+                { label: '策展专题', value: statsData.collectionCount },
                 { label: '放映场次', value: statsData.screeningCount },
                 { label: '观后短评', value: statsData.reviewCount },
                 { label: '心仪收藏', value: statsData.favoriteCount },
@@ -72,6 +83,65 @@ export default function Home() {
             </div>
           )}
         </div>
+      </section>
+
+      <section className="max-w-7xl mx-auto px-6 py-16">
+        <div className="flex items-end justify-between mb-10">
+          <div>
+            <h2 className="text-2xl md:text-3xl font-serif font-bold">专题策展</h2>
+            <p className="text-film-cream/60 mt-2">按导演、地区、主题精心编排的影片合集</p>
+          </div>
+          <Link to="/collections" className="text-film-gold hover:underline text-sm">
+            全部专题 →
+          </Link>
+        </div>
+        {featuredCollections.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {featuredCollections.map(col => (
+              <Link
+                key={col.id}
+                to={`/collections/${col.id}`}
+                className="group relative rounded-2xl overflow-hidden border border-film-gray/50 hover:border-film-gold/50 transition-all duration-300 hover:-translate-y-1 hover:shadow-2xl hover:shadow-film-gold/10"
+              >
+                {col.cover_image ? (
+                  <div className="h-52 overflow-hidden">
+                    <img
+                      src={col.cover_image}
+                      alt={col.title}
+                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-52 bg-gradient-to-br from-film-gray to-film-dark flex items-center justify-center">
+                    <span className="text-6xl opacity-30">🎬</span>
+                  </div>
+                )}
+                <div className="absolute inset-0 bg-gradient-to-t from-film-black via-film-black/40 to-transparent" />
+                <div className="absolute bottom-0 left-0 right-0 p-5">
+                  <span className="inline-block text-xs px-2.5 py-0.5 rounded-full bg-film-gold/20 text-film-gold mb-2">
+                    {typeLabels[col.type] || '精选专题'}
+                  </span>
+                  <h3 className="text-lg md:text-xl font-serif font-bold text-film-cream group-hover:text-film-gold transition-colors">
+                    {col.title}
+                  </h3>
+                  {col.subtitle && (
+                    <p className="text-xs text-film-cream/60 mt-1 italic">{col.subtitle}</p>
+                  )}
+                  {col.description && (
+                    <p className="text-sm text-film-cream/70 mt-2 line-clamp-2">{col.description}</p>
+                  )}
+                  <div className="mt-3 text-xs text-film-cream/60">
+                    📽 {col.film_count || 0} 部影片
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="py-12 text-center border border-dashed border-film-gray rounded-xl">
+            <p className="text-film-cream/50">暂无推荐专题</p>
+          </div>
+        )}
       </section>
 
       <section className="max-w-7xl mx-auto px-6 py-16">

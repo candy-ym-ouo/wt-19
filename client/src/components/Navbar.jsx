@@ -2,6 +2,7 @@ import { NavLink, Link } from 'react-router-dom';
 
 const navItems = [
   { to: '/', label: '首页', end: true },
+  { to: '/collections', label: '专题策展' },
   { to: '/films', label: '影片库' },
   { to: '/calendar', label: '放映日历' },
   { to: '/reviews', label: '观后短评' },

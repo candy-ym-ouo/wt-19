@@ -91,6 +91,35 @@ db.exec(`
     FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
     FOREIGN KEY (screening_id) REFERENCES screenings(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS collections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    subtitle TEXT,
+    description TEXT,
+    cover_image TEXT,
+    type TEXT NOT NULL DEFAULT 'custom',
+    filter_director TEXT,
+    filter_country TEXT,
+    filter_theme TEXT,
+    sort_order INTEGER DEFAULT 0,
+    is_featured INTEGER DEFAULT 0,
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS collection_films (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    collection_id INTEGER NOT NULL,
+    film_id INTEGER NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    note TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (collection_id) REFERENCES collections(id) ON DELETE CASCADE,
+    FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
+    UNIQUE(collection_id, film_id)
+  );
 `);
 
 const columns = db.prepare("PRAGMA table_info(screenings)").all();
@@ -280,6 +309,42 @@ if (filmCount === 0) {
   `);
   insertNotification.run(filmIds[0], null, 'ticket_on_sale', '《花样年华》已开票', '4K修复版放映场次现已开放购票');
   insertNotification.run(filmIds[2], null, 'schedule_change', '《四百击》放映时间变更', '时间由15:00调整为14:00，请留意');
+
+  const insertCollection = db.prepare(`
+    INSERT INTO collections (title, subtitle, description, cover_image, type, filter_director, filter_country, filter_theme, sort_order, is_featured, is_active)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertCollectionFilm = db.prepare(`
+    INSERT INTO collection_films (collection_id, film_id, sort_order, note)
+    VALUES (?, ?, ?, ?)
+  `);
+
+  const col1 = insertCollection.run(
+    '王家卫：都市迷情', 'Wong Kar-wai Retrospective',
+    '从重庆大厦到2046号房间，王家卫用光影描绘都市人的孤独与渴望。',
+    'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=1200&h=400&fit=crop',
+    'director', '王家卫', null, null, 1, 1, 1
+  ).lastInsertRowid;
+  insertCollectionFilm.run(col1, filmIds[0], 1, '旗袍摇曳的60年代香港');
+  insertCollectionFilm.run(col1, filmIds[1], 2, 'California Dreamin\'');
+
+  const col2 = insertCollection.run(
+    '日本电影：物哀之美', 'Japanese Cinema',
+    '从小津安二郎的低角度镜头到是枝裕和的家庭叙事，感受日本电影的独特美学。',
+    'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=1200&h=400&fit=crop',
+    'country', null, '日本', null, 2, 1, 1
+  ).lastInsertRowid;
+  insertCollectionFilm.run(col2, filmIds[3], 1, '小津安二郎的巅峰之作');
+
+  const col3 = insertCollection.run(
+    '诗意光影：电影诗人', 'Poetic Cinema',
+    '塔可夫斯基、费里尼、特吕弗——那些用胶片书写诗歌的大师们。',
+    'https://images.unsplash.com/photo-1478720568477-152d9b164e26?w=1200&h=400&fit=crop',
+    'theme', null, null, '诗意', 3, 1, 1
+  ).lastInsertRowid;
+  insertCollectionFilm.run(col3, filmIds[2], 1, '法国新浪潮的起点');
+  insertCollectionFilm.run(col3, filmIds[4], 2, '费里尼的自传式幻想');
+  insertCollectionFilm.run(col3, filmIds[5], 3, '塔可夫斯基的精神漫游');
 
   console.log('✅ 示例数据已初始化');
 }
