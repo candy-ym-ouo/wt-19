@@ -54,6 +54,9 @@ export default function Admin() {
   const [collectionForm, setCollectionForm] = useState(emptyCollection);
   const [addFilmForm, setAddFilmForm] = useState({ film_id: '', sort_order: 0, note: '' });
   const [screeningConflictError, setScreeningConflictError] = useState(null);
+  const [filmImportResult, setFilmImportResult] = useState(null);
+  const [screeningImportResult, setScreeningImportResult] = useState(null);
+  const [importing, setImporting] = useState(false);
 
   const fetchAll = async () => {
     setLoading(true);
@@ -500,6 +503,58 @@ export default function Admin() {
     }
   };
 
+  const handleFilmImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.csv')) {
+      alert('请选择CSV文件');
+      e.target.value = '';
+      return;
+    }
+    setImporting(true);
+    setFilmImportResult(null);
+    try {
+      const result = await filmsApi.importCsv(file);
+      setFilmImportResult(result);
+      fetchAll();
+    } catch (err) {
+      setFilmImportResult({
+        total: 0, success_count: 0, skipped_count: 0, error_count: 1,
+        success: [], skipped: [],
+        errors: [{ row: 0, message: err.message || '导入失败' }]
+      });
+    } finally {
+      setImporting(false);
+      e.target.value = '';
+    }
+  };
+
+  const handleScreeningImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.name.endsWith('.csv')) {
+      alert('请选择CSV文件');
+      e.target.value = '';
+      return;
+    }
+    setImporting(true);
+    setScreeningImportResult(null);
+    try {
+      const result = await screeningsApi.importCsv(file);
+      setScreeningImportResult(result);
+      fetchAll();
+    } catch (err) {
+      setScreeningImportResult({
+        total: 0, success_count: 0, skipped_count: 0, error_count: 1,
+        success: [], skipped: [],
+        errors: [{ row: 0, message: err.message || '导入失败' }]
+      });
+    } finally {
+      setImporting(false);
+      e.target.value = '';
+    }
+  };
+
   const tabs = [
     { key: 'overview', label: '总览', icon: '📊' },
     { key: 'collections', label: '专题策展', icon: '📚' },
@@ -829,15 +884,99 @@ export default function Admin() {
 
       {activeTab === 'films' && (
         <div>
-          <div className="flex justify-between items-center mb-6">
+          <div className="flex flex-wrap justify-between items-center gap-4 mb-6">
             <p className="text-film-cream/60">共 {filmList.length} 部影片</p>
-            <button
-              onClick={openNewFilm}
-              className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
-            >
-              + 新增影片
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => filmsApi.exportCsv()}
+                className="px-4 py-2 bg-film-gray/50 text-film-cream/80 border border-film-gray rounded-lg hover:bg-film-gray transition-colors text-sm"
+              >
+                📥 导出CSV
+              </button>
+              <button
+                onClick={() => filmsApi.downloadTemplate()}
+                className="px-4 py-2 bg-film-gray/50 text-film-cream/80 border border-film-gray rounded-lg hover:bg-film-gray transition-colors text-sm"
+              >
+                📄 下载模板
+              </button>
+              <label className={`px-4 py-2 border rounded-lg text-sm cursor-pointer transition-colors ${
+                importing
+                  ? 'bg-film-gray/30 text-film-cream/40 border-film-gray/30 cursor-not-allowed'
+                  : 'bg-film-gold/10 text-film-gold border-film-gold/50 hover:bg-film-gold/20'
+              }`}>
+                📤 导入CSV
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFilmImport}
+                  disabled={importing}
+                  className="hidden"
+                />
+              </label>
+              <button
+                onClick={openNewFilm}
+                className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+              >
+                + 新增影片
+              </button>
+            </div>
           </div>
+
+          {filmImportResult && (
+            <div className="mb-6 p-5 rounded-xl border border-film-gray/50 bg-film-dark/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold">导入结果</h3>
+                <button
+                  onClick={() => setFilmImportResult(null)}
+                  className="text-film-cream/50 hover:text-film-cream text-sm"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-film-black/40 text-center">
+                  <div className="text-2xl font-bold text-film-cream">{filmImportResult.total}</div>
+                  <div className="text-xs text-film-cream/50">总计</div>
+                </div>
+                <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                  <div className="text-2xl font-bold text-green-400">{filmImportResult.success_count}</div>
+                  <div className="text-xs text-film-cream/50">成功</div>
+                </div>
+                <div className="p-3 rounded-lg bg-yellow-500/10 text-center">
+                  <div className="text-2xl font-bold text-yellow-400">{filmImportResult.skipped_count}</div>
+                  <div className="text-xs text-film-cream/50">跳过（重复）</div>
+                </div>
+                <div className="p-3 rounded-lg bg-red-500/10 text-center">
+                  <div className="text-2xl font-bold text-red-400">{filmImportResult.error_count}</div>
+                  <div className="text-xs text-film-cream/50">失败</div>
+                </div>
+              </div>
+              {filmImportResult.skipped?.length > 0 && (
+                <div className="mb-3">
+                  <p className="text-sm text-yellow-400 font-medium mb-2">⚠ 跳过记录：</p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {filmImportResult.skipped.map((s, i) => (
+                      <div key={i} className="text-xs text-film-cream/70 bg-yellow-500/5 rounded px-3 py-1.5">
+                        第{s.row}行：{s.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {filmImportResult.errors?.length > 0 && (
+                <div>
+                  <p className="text-sm text-red-400 font-medium mb-2">✗ 错误记录：</p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {filmImportResult.errors.map((e, i) => (
+                      <div key={i} className="text-xs text-film-cream/70 bg-red-500/5 rounded px-3 py-1.5">
+                        {e.row ? `第${e.row}行：` : ''}{e.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="bg-film-dark/50 rounded-xl border border-film-gray/50 overflow-hidden">
             <div className="overflow-x-auto">
@@ -984,13 +1123,98 @@ export default function Admin() {
                 ))}
               </select>
             </div>
-            <button
-              onClick={openNewScreening}
-              className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
-            >
-              + 新增放映
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => screeningsApi.exportCsv()}
+                className="px-4 py-2 bg-film-gray/50 text-film-cream/80 border border-film-gray rounded-lg hover:bg-film-gray transition-colors text-sm"
+              >
+                📥 导出CSV
+              </button>
+              <button
+                onClick={() => screeningsApi.downloadTemplate()}
+                className="px-4 py-2 bg-film-gray/50 text-film-cream/80 border border-film-gray rounded-lg hover:bg-film-gray transition-colors text-sm"
+              >
+                📄 下载模板
+              </button>
+              <label className={`px-4 py-2 border rounded-lg text-sm cursor-pointer transition-colors ${
+                importing
+                  ? 'bg-film-gray/30 text-film-cream/40 border-film-gray/30 cursor-not-allowed'
+                  : 'bg-film-gold/10 text-film-gold border-film-gold/50 hover:bg-film-gold/20'
+              }`}>
+                📤 导入CSV
+                <input
+                  type="file"
+                  accept=".csv"
+                  onChange={handleScreeningImport}
+                  disabled={importing}
+                  className="hidden"
+                />
+              </label>
+              <button
+                onClick={openNewScreening}
+                className="px-5 py-2 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors"
+              >
+                + 新增放映
+              </button>
+            </div>
           </div>
+
+          {screeningImportResult && (
+            <div className="mb-6 p-5 rounded-xl border border-film-gray/50 bg-film-dark/50">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold">导入结果</h3>
+                <button
+                  onClick={() => setScreeningImportResult(null)}
+                  className="text-film-cream/50 hover:text-film-cream text-sm"
+                >
+                  关闭
+                </button>
+              </div>
+              <div className="grid grid-cols-4 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-film-black/40 text-center">
+                  <div className="text-2xl font-bold text-film-cream">{screeningImportResult.total}</div>
+                  <div className="text-xs text-film-cream/50">总计</div>
+                </div>
+                <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                  <div className="text-2xl font-bold text-green-400">{screeningImportResult.success_count}</div>
+                  <div className="text-xs text-film-cream/50">成功</div>
+                </div>
+                <div className="p-3 rounded-lg bg-yellow-500/10 text-center">
+                  <div className="text-2xl font-bold text-yellow-400">{screeningImportResult.skipped_count}</div>
+                  <div className="text-xs text-film-cream/50">跳过（重复）</div>
+                </div>
+                <div className="p-3 rounded-lg bg-red-500/10 text-center">
+                  <div className="text-2xl font-bold text-red-400">{screeningImportResult.error_count}</div>
+                  <div className="text-xs text-film-cream/50">失败</div>
+                </div>
+              </div>
+              {screeningImportResult.skipped?.length > 0 && (
+                <div className="mb-3">
+                  <p className="text-sm text-yellow-400 font-medium mb-2">⚠ 跳过记录：</p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {screeningImportResult.skipped.map((s, i) => (
+                      <div key={i} className="text-xs text-film-cream/70 bg-yellow-500/5 rounded px-3 py-1.5">
+                        第{s.row}行：{s.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {screeningImportResult.errors?.length > 0 && (
+                <div>
+                  <p className="text-sm text-red-400 font-medium mb-2">✗ 错误记录：</p>
+                  <div className="space-y-1 max-h-40 overflow-y-auto">
+                    {screeningImportResult.errors.map((e, i) => (
+                      <div key={i} className="text-xs text-film-cream/70 bg-red-500/5 rounded px-3 py-1.5">
+                        {e.row ? `第${e.row}行：` : ''}{e.message}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="space-y-2">
             {(screeningVenueFilter
               ? screeningList.filter(s => String(s.venue_id) === String(screeningVenueFilter))

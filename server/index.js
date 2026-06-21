@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
 const db = require('./database');
 
 const app = express();
@@ -8,6 +9,70 @@ const PORT = Number(process.env.PORT || 5001);
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+const upload = multer({ storage: multer.memoryStorage() });
+
+function csvEscape(val) {
+  if (val == null) return '';
+  const s = String(val);
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function parseCsvLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (i + 1 < line.length && line[i + 1] === '"') {
+          current += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ',') {
+        result.push(current.trim());
+        current = '';
+      } else {
+        current += ch;
+      }
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+function parseCsv(text) {
+  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n').filter(l => l.trim());
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const headers = parseCsvLine(lines[0]);
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    const values = parseCsvLine(lines[i]);
+    const row = {};
+    headers.forEach((h, idx) => {
+      row[h] = values[idx] || '';
+    });
+    rows.push(row);
+  }
+  return { headers, rows };
+}
+
+const FILM_CSV_HEADERS = ['title', 'original_title', 'director', 'year', 'country', 'genre', 'duration', 'language', 'synopsis', 'poster', 'rating'];
+const SCREENING_CSV_HEADERS = ['film_title', 'screening_date', 'screening_time', 'venue_name', 'location', 'notes', 'ticket_status', 'ticket_open_date', 'is_changed', 'change_description'];
+
+const VALID_TICKET_STATUSES = ['not_open', 'on_sale', 'sold_out'];
 
 // ============ 影片相关 API ============
 
@@ -58,6 +123,131 @@ app.get('/api/films', (req, res) => {
 
   const films = db.prepare(sql).all(...params);
   res.json(films);
+});
+
+app.get('/api/films/template', (req, res) => {
+  const headerLine = FILM_CSV_HEADERS.join(',');
+  const exampleLine = ['花样年华', 'In the Mood for Love', '王家卫', '2000', '中国香港', '剧情/爱情', '98', '粤语', '1962年的香港故事', '', '8.7'].map(csvEscape).join(',');
+  const csv = '\uFEFF' + headerLine + '\n' + exampleLine + '\n';
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=films_template.csv');
+  res.send(csv);
+});
+
+app.get('/api/films/export', (req, res) => {
+  const films = db.prepare('SELECT * FROM films ORDER BY created_at DESC').all();
+  const headerLine = FILM_CSV_HEADERS.join(',');
+  const rows = films.map(f =>
+    FILM_CSV_HEADERS.map(h => csvEscape(f[h])).join(',')
+  );
+  const csv = '\uFEFF' + headerLine + '\n' + rows.join('\n') + '\n';
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=films_export.csv');
+  res.send(csv);
+});
+
+app.post('/api/films/import', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: '请上传CSV文件' });
+  }
+
+  let text;
+  try {
+    text = req.file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
+  } catch (e) {
+    return res.status(400).json({ error: '文件编码错误，请使用UTF-8编码' });
+  }
+
+  const { headers, rows } = parseCsv(text);
+  if (headers.length === 0 || rows.length === 0) {
+    return res.status(400).json({ error: 'CSV文件为空或格式不正确' });
+  }
+
+  const missingHeaders = ['title'].filter(h => !headers.includes(h));
+  if (missingHeaders.length > 0) {
+    return res.status(400).json({
+      error: `模板校验失败：缺少必填列 [${missingHeaders.join(', ')}]`,
+      required_headers: FILM_CSV_HEADERS,
+      actual_headers: headers
+    });
+  }
+
+  const errors = [];
+  const success = [];
+  const skipped = [];
+  const insertFilm = db.prepare(`
+    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const findDuplicate = db.prepare(`
+    SELECT id FROM films WHERE title = ? AND (director = ? OR (? IS NULL AND director IS NULL)) AND (year = ? OR (? IS NULL AND year IS NULL))
+  `);
+
+  const transaction = db.transaction((rows) => {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2;
+
+      if (!row.title || !row.title.trim()) {
+        errors.push({ row: rowNum, data: row, message: '影片标题不能为空' });
+        continue;
+      }
+
+      const title = row.title.trim();
+      const director = row.director ? row.director.trim() : null;
+      const year = row.year ? parseInt(row.year) : null;
+      const originalTitle = row.original_title ? row.original_title.trim() : null;
+      const country = row.country ? row.country.trim() : null;
+      const genre = row.genre ? row.genre.trim() : null;
+      const duration = row.duration ? parseInt(row.duration) : null;
+      const language = row.language ? row.language.trim() : null;
+      const synopsis = row.synopsis ? row.synopsis.trim() : null;
+      const poster = row.poster ? row.poster.trim() : null;
+      const rating = row.rating ? parseFloat(row.rating) : null;
+
+      if (row.year && isNaN(parseInt(row.year))) {
+        errors.push({ row: rowNum, data: row, message: '年份格式不正确' });
+        continue;
+      }
+      if (row.duration && isNaN(parseInt(row.duration))) {
+        errors.push({ row: rowNum, data: row, message: '时长格式不正确，应为整数分钟' });
+        continue;
+      }
+      if (row.rating && (isNaN(parseFloat(row.rating)) || parseFloat(row.rating) < 0 || parseFloat(row.rating) > 10)) {
+        errors.push({ row: rowNum, data: row, message: '评分格式不正确，应为0-10的数字' });
+        continue;
+      }
+
+      const existing = findDuplicate.get(title, director, director, year, year);
+      if (existing) {
+        skipped.push({ row: rowNum, data: row, message: `影片「${title}」已存在（导演：${director || '未知'}，年份：${year || '未知'}）`, existing_id: existing.id });
+        continue;
+      }
+
+      try {
+        const info = insertFilm.run(title, originalTitle, director, year, country, genre, duration, language, synopsis, poster, rating);
+        success.push({ row: rowNum, id: info.lastInsertRowid, title });
+      } catch (err) {
+        errors.push({ row: rowNum, data: row, message: `数据库写入失败：${err.message}` });
+      }
+    }
+  });
+
+  try {
+    transaction(rows);
+  } catch (err) {
+    return res.status(500).json({ error: '导入过程中发生错误', detail: err.message });
+  }
+
+  res.json({
+    total: rows.length,
+    success_count: success.length,
+    skipped_count: skipped.length,
+    error_count: errors.length,
+    success,
+    skipped,
+    errors
+  });
 });
 
 app.get('/api/films/:id', (req, res) => {
@@ -486,6 +676,184 @@ app.post('/api/screenings', (req, res) => {
   }
 
   res.status(201).json(screening);
+});
+
+app.get('/api/screenings/template', (req, res) => {
+  const headerLine = SCREENING_CSV_HEADERS.join(',');
+  const exampleLine = ['花样年华', '2026-07-01', '19:30', '中国电影资料馆', '北京·小西天', '4K修复版', 'not_open', '2026-06-25', '0', ''].map(csvEscape).join(',');
+  const csv = '\uFEFF' + headerLine + '\n' + exampleLine + '\n';
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=screenings_template.csv');
+  res.send(csv);
+});
+
+app.get('/api/screenings/export', (req, res) => {
+  const screenings = db.prepare(`
+    SELECT s.*, f.title as film_title, v.name as venue_name
+    FROM screenings s
+    LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
+    ORDER BY s.screening_date, s.screening_time
+  `).all();
+  const headerLine = SCREENING_CSV_HEADERS.join(',');
+  const rows = screenings.map(s => [
+    csvEscape(s.film_title || ''),
+    csvEscape(s.screening_date),
+    csvEscape(s.screening_time),
+    csvEscape(s.venue_name || s.venue || ''),
+    csvEscape(s.location),
+    csvEscape(s.notes),
+    csvEscape(s.ticket_status),
+    csvEscape(s.ticket_open_date),
+    csvEscape(s.is_changed ? '1' : '0'),
+    csvEscape(s.change_description)
+  ].join(','));
+  const csv = '\uFEFF' + headerLine + '\n' + rows.join('\n') + '\n';
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', 'attachment; filename=screenings_export.csv');
+  res.send(csv);
+});
+
+app.post('/api/screenings/import', upload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: '请上传CSV文件' });
+  }
+
+  let text;
+  try {
+    text = req.file.buffer.toString('utf-8').replace(/^\uFEFF/, '');
+  } catch (e) {
+    return res.status(400).json({ error: '文件编码错误，请使用UTF-8编码' });
+  }
+
+  const { headers, rows } = parseCsv(text);
+  if (headers.length === 0 || rows.length === 0) {
+    return res.status(400).json({ error: 'CSV文件为空或格式不正确' });
+  }
+
+  const missingHeaders = ['film_title', 'screening_date', 'screening_time'].filter(h => !headers.includes(h));
+  if (missingHeaders.length > 0) {
+    return res.status(400).json({
+      error: `模板校验失败：缺少必填列 [${missingHeaders.join(', ')}]`,
+      required_headers: SCREENING_CSV_HEADERS,
+      actual_headers: headers
+    });
+  }
+
+  const errors = [];
+  const success = [];
+  const skipped = [];
+  const findFilmByTitle = db.prepare('SELECT id, duration, title FROM films WHERE title = ? COLLATE NOCASE');
+  const findVenueByName = db.prepare('SELECT id, name, location FROM venues WHERE name = ? COLLATE NOCASE AND is_active = 1');
+  const findDuplicateScreening = db.prepare(`
+    SELECT s.id FROM screenings s
+    LEFT JOIN films f ON s.film_id = f.id
+    LEFT JOIN venues v ON s.venue_id = v.id
+    WHERE f.title = ? COLLATE NOCASE AND s.screening_date = ? AND s.screening_time = ?
+    AND (v.name = ? COLLATE NOCASE OR (s.venue = ? AND s.venue != ''))
+  `);
+  const insertScreening = db.prepare(`
+    INSERT INTO screenings (film_id, venue_id, screening_date, screening_time, venue, location, notes, ticket_status, ticket_open_date, is_changed, change_description)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const transaction = db.transaction((rows) => {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2;
+
+      if (!row.film_title || !row.film_title.trim()) {
+        errors.push({ row: rowNum, data: row, message: '影片标题(film_title)不能为空' });
+        continue;
+      }
+      if (!row.screening_date || !row.screening_date.trim()) {
+        errors.push({ row: rowNum, data: row, message: '放映日期(screening_date)不能为空' });
+        continue;
+      }
+      if (!row.screening_time || !row.screening_time.trim()) {
+        errors.push({ row: rowNum, data: row, message: '放映时间(screening_time)不能为空' });
+        continue;
+      }
+
+      const filmTitle = row.film_title.trim();
+      const screeningDate = row.screening_date.trim();
+      const screeningTime = row.screening_time.trim();
+
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(screeningDate)) {
+        errors.push({ row: rowNum, data: row, message: `日期格式不正确「${screeningDate}」，应为 YYYY-MM-DD` });
+        continue;
+      }
+      if (!/^\d{1,2}:\d{2}$/.test(screeningTime)) {
+        errors.push({ row: rowNum, data: row, message: `时间格式不正确「${screeningTime}」，应为 HH:MM` });
+        continue;
+      }
+
+      const film = findFilmByTitle.get(filmTitle);
+      if (!film) {
+        errors.push({ row: rowNum, data: row, message: `影片「${filmTitle}」在数据库中不存在，请先导入影片` });
+        continue;
+      }
+
+      const venueName = row.venue_name ? row.venue_name.trim() : '';
+      let venueId = null;
+      let finalVenue = venueName;
+      let finalLocation = row.location ? row.location.trim() : null;
+
+      if (venueName) {
+        const venue = findVenueByName.get(venueName);
+        if (venue) {
+          venueId = venue.id;
+          finalVenue = venue.name;
+          finalLocation = venue.location || finalLocation;
+        }
+      }
+
+      const ticketStatus = row.ticket_status ? row.ticket_status.trim() : 'not_open';
+      if (ticketStatus && !VALID_TICKET_STATUSES.includes(ticketStatus)) {
+        errors.push({ row: rowNum, data: row, message: `票务状态「${ticketStatus}」不合法，应为：${VALID_TICKET_STATUSES.join('/')}` });
+        continue;
+      }
+
+      const isChanged = row.is_changed === '1' ? 1 : 0;
+
+      const existing = findDuplicateScreening.get(filmTitle, screeningDate, screeningTime, venueName, venueName);
+      if (existing) {
+        skipped.push({ row: rowNum, data: row, message: `放映已存在：${filmTitle} ${screeningDate} ${screeningTime}${venueName ? ' @ ' + venueName : ''}`, existing_id: existing.id });
+        continue;
+      }
+
+      try {
+        const info = insertScreening.run(
+          film.id, venueId, screeningDate, screeningTime,
+          finalVenue || null, finalLocation || null,
+          row.notes ? row.notes.trim() : null,
+          ticketStatus,
+          row.ticket_open_date ? row.ticket_open_date.trim() : null,
+          isChanged,
+          row.change_description ? row.change_description.trim() : null
+        );
+        success.push({ row: rowNum, id: info.lastInsertRowid, film_title: filmTitle, screening_date: screeningDate, screening_time: screeningTime });
+      } catch (err) {
+        errors.push({ row: rowNum, data: row, message: `数据库写入失败：${err.message}` });
+      }
+    }
+  });
+
+  try {
+    transaction(rows);
+  } catch (err) {
+    return res.status(500).json({ error: '导入过程中发生错误', detail: err.message });
+  }
+
+  res.json({
+    total: rows.length,
+    success_count: success.length,
+    skipped_count: skipped.length,
+    error_count: errors.length,
+    success,
+    skipped,
+    errors
+  });
 });
 
 app.put('/api/screenings/:id', (req, res) => {

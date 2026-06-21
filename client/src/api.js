@@ -137,6 +137,25 @@ export const films = {
   create: (data) => request('/films', { method: 'POST', body: JSON.stringify(data) }),
   update: (id, data) => request(`/films/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id) => request(`/films/${id}`, { method: 'DELETE' }),
+  exportCsv: () => {
+    window.open(`${API_BASE}/films/export`, '_blank');
+  },
+  downloadTemplate: () => {
+    window.open(`${API_BASE}/films/template`, '_blank');
+  },
+  importCsv: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/films/import`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw { message: data.error || `导入失败: ${res.status}`, data };
+    }
+    return data;
+  },
 };
 
 export const screenings = {
@@ -147,6 +166,25 @@ export const screenings = {
   create: (data) => request('/screenings', { method: 'POST', body: JSON.stringify(data) }),
   update: (id, data) => request(`/screenings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id) => request(`/screenings/${id}`, { method: 'DELETE' }),
+  exportCsv: () => {
+    window.open(`${API_BASE}/screenings/export`, '_blank');
+  },
+  downloadTemplate: () => {
+    window.open(`${API_BASE}/screenings/template`, '_blank');
+  },
+  importCsv: async (file) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    const res = await fetch(`${API_BASE}/screenings/import`, {
+      method: 'POST',
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw { message: data.error || `导入失败: ${res.status}`, data };
+    }
+    return data;
+  },
 };
 
 export const venues = {
