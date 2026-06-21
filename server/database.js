@@ -88,6 +88,10 @@ db.exec(`
     film_id INTEGER NOT NULL UNIQUE,
     ticket_reminder_enabled INTEGER DEFAULT 0,
     schedule_change_reminder_enabled INTEGER DEFAULT 0,
+    watch_status TEXT DEFAULT 'want_to_watch',
+    ticket_date TEXT,
+    watched_date TEXT,
+    plan_date TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE
@@ -188,6 +192,14 @@ if (!favColNames.includes('ticket_reminder_enabled')) {
     ALTER TABLE favorites ADD COLUMN ticket_reminder_enabled INTEGER DEFAULT 0;
     ALTER TABLE favorites ADD COLUMN schedule_change_reminder_enabled INTEGER DEFAULT 0;
     ALTER TABLE favorites ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP;
+  `);
+}
+if (!favColNames.includes('watch_status')) {
+  db.exec(`
+    ALTER TABLE favorites ADD COLUMN watch_status TEXT DEFAULT 'want_to_watch';
+    ALTER TABLE favorites ADD COLUMN ticket_date TEXT;
+    ALTER TABLE favorites ADD COLUMN watched_date TEXT;
+    ALTER TABLE favorites ADD COLUMN plan_date TEXT;
   `);
 }
 
@@ -367,8 +379,9 @@ if (filmCount === 0) {
     insertReview.run(filmIds[r.filmIndex], r.author, r.content, r.rating, r.mood, r.watchedDate, r.isSpoiler, r.likes);
   });
 
-  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(filmIds[0], 1, 1);
-  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(filmIds[3], 1, 0);
+  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled, watch_status, ticket_date, watched_date, plan_date) VALUES (?, ?, ?, ?, ?, ?, ?)').run(filmIds[0], 1, 1, 'ticketed', '2026-06-21', null, '2026-06-25');
+  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled, watch_status, ticket_date, watched_date, plan_date) VALUES (?, ?, ?, ?, ?, ?, ?)').run(filmIds[3], 1, 0, 'watched', '2026-06-10', '2026-06-20', '2026-06-20');
+  db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled, watch_status, ticket_date, watched_date, plan_date) VALUES (?, ?, ?, ?, ?, ?, ?)').run(filmIds[2], 1, 1, 'want_to_watch', null, null, null);
 
   const insertNotification = db.prepare(`
     INSERT INTO notifications (film_id, screening_id, type, title, content)

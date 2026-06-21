@@ -6,7 +6,7 @@ const navItems = [
   { to: '/films', label: '影片库' },
   { to: '/calendar', label: '放映日历' },
   { to: '/reviews', label: '观后短评' },
-  { to: '/favorites', label: '收藏夹' },
+  { to: '/favorites', label: '观影计划' },
   { to: '/admin', label: '后台维护' },
 ];
 

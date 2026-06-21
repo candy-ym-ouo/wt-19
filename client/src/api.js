@@ -95,8 +95,12 @@ export const reports = {
 };
 
 export const favorites = {
-  list: () => request('/favorites'),
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString();
+    return request(`/favorites${qs ? '?' + qs : ''}`);
+  },
   toggle: (filmId, data = {}) => request(`/favorites/${filmId}`, { method: 'POST', body: JSON.stringify(data) }),
+  updateStatus: (filmId, data) => request(`/favorites/${filmId}/status`, { method: 'PUT', body: JSON.stringify(data) }),
   updateReminders: (filmId, data) => request(`/favorites/${filmId}/reminders`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (filmId) => request(`/favorites/${filmId}`, { method: 'DELETE' }),
 };

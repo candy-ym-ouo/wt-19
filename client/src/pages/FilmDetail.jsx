@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { films as filmsApi, reviews as reviewsApi, favorites as favApi, reports as reportsApi, likeStore } from '../api.js';
 
@@ -11,6 +11,12 @@ const sortOptions = [
 ];
 const reportReasons = ['剧透', '人身攻击', '垃圾广告', '违规内容', '其他'];
 
+const WATCH_STATUS_CONFIG = {
+  want_to_watch: { label: '想看', icon: '👁️', next: 'ticketed', color: 'bg-blue-500/15 text-blue-400 border-blue-500/50 hover:bg-blue-500/25', activeColor: 'bg-blue-500 text-white hover:bg-blue-500/90' },
+  ticketed: { label: '已购票', icon: '🎟️', next: 'watched', color: 'bg-film-gold/15 text-film-gold border-film-gold/50 hover:bg-film-gold/25', activeColor: 'bg-film-gold text-film-black hover:bg-film-gold/90' },
+  watched: { label: '已观看', icon: '✅', next: null, color: 'bg-green-500/15 text-green-400 border-green-500/50 hover:bg-green-500/25', activeColor: 'bg-green-500 text-white hover:bg-green-500/90' },
+};
+
 export default function FilmDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -19,6 +25,11 @@ export default function FilmDetail() {
   const [isFavorite, setIsFavorite] = useState(false);
   const [ticketReminder, setTicketReminder] = useState(false);
   const [scheduleReminder, setScheduleReminder] = useState(false);
+  const [watchStatus, setWatchStatus] = useState(null);
+  const [ticketDate, setTicketDate] = useState(null);
+  const [watchedDate, setWatchedDate] = useState(null);
+  const [planDate, setPlanDate] = useState(null);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [showReviewForm, setShowReviewForm] = useState(false);
   const [reviewForm, setReviewForm] = useState({ author: '', content: '', rating: 5, mood: '', watched_date: '', is_spoiler: false });
   const [reviewSort, setReviewSort] = useState('created_at_desc');
@@ -32,6 +43,7 @@ export default function FilmDetail() {
   });
   const [showReportModal, setShowReportModal] = useState(null);
   const [reportForm, setReportForm] = useState({ reason: '', reporter: '' });
+  const statusDropdownRef = useRef(null);
 
   const fetchData = () => {
     setLoading(true);
@@ -40,6 +52,10 @@ export default function FilmDetail() {
       setIsFavorite(data.isFavorite);
       setTicketReminder(data.ticketReminderEnabled);
       setScheduleReminder(data.scheduleChangeReminderEnabled);
+      setWatchStatus(data.watchStatus);
+      setTicketDate(data.ticketDate);
+      setWatchedDate(data.watchedDate);
+      setPlanDate(data.planDate);
       setLoading(false);
     }).catch(() => {
       navigate('/films');
@@ -49,6 +65,16 @@ export default function FilmDetail() {
   useEffect(() => {
     fetchData();
   }, [id, reviewSort]);
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (statusDropdownRef.current && !statusDropdownRef.current.contains(e.target)) {
+        setStatusDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   const toggleSpoiler = (reviewId) => {
     setShowSpoilers(prev => ({ ...prev, [reviewId]: !prev[reviewId] }));
@@ -108,22 +134,72 @@ export default function FilmDetail() {
     }
   };
 
-  const handleToggleFavorite = async () => {
+  const handleToggleFavorite = async (targetStatus = 'want_to_watch') => {
     try {
-      const res = await favApi.toggle(id, {
-        ticket_reminder_enabled: ticketReminder || !isFavorite,
-        schedule_change_reminder_enabled: scheduleReminder || !isFavorite,
-      });
-      setIsFavorite(res.isFavorite);
-      if (res.isFavorite) {
-        if (res.ticket_reminder_enabled !== undefined) setTicketReminder(res.ticket_reminder_enabled);
-        if (res.schedule_change_reminder_enabled !== undefined) setScheduleReminder(res.schedule_change_reminder_enabled);
-      } else {
+      if (isFavorite) {
+        await favApi.remove(id);
+        setIsFavorite(false);
+        setWatchStatus(null);
+        setTicketDate(null);
+        setWatchedDate(null);
+        setPlanDate(null);
         setTicketReminder(false);
         setScheduleReminder(false);
+      } else {
+        const today = new Date().toISOString().split('T')[0];
+        const statusData = { watch_status: targetStatus };
+        if (targetStatus === 'ticketed') {
+          statusData.ticket_date = today;
+        } else if (targetStatus === 'watched') {
+          statusData.watched_date = today;
+        }
+        const res = await favApi.toggle(id, {
+          ticket_reminder_enabled: targetStatus !== 'watched',
+          schedule_change_reminder_enabled: targetStatus !== 'watched',
+          ...statusData
+        });
+        setIsFavorite(res.isFavorite);
+        if (res.isFavorite) {
+          if (res.ticket_reminder_enabled !== undefined) setTicketReminder(res.ticket_reminder_enabled);
+          if (res.schedule_change_reminder_enabled !== undefined) setScheduleReminder(res.schedule_change_reminder_enabled);
+          if (res.watch_status) setWatchStatus(res.watch_status);
+          if (res.ticket_date !== undefined) setTicketDate(res.ticket_date);
+          if (res.watched_date !== undefined) setWatchedDate(res.watched_date);
+          if (res.plan_date !== undefined) setPlanDate(res.plan_date);
+        }
       }
+      setStatusDropdownOpen(false);
     } catch (err) {
       alert(err.message);
+    }
+  };
+
+  const handleChangeStatus = async (newStatus) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const statusData = { watch_status: newStatus };
+      if (newStatus === 'ticketed' && !ticketDate) {
+        statusData.ticket_date = today;
+      }
+      if (newStatus === 'watched' && !watchedDate) {
+        statusData.watched_date = today;
+      }
+      const res = await favApi.updateStatus(id, statusData);
+      setWatchStatus(res.watch_status);
+      if (res.ticket_date !== undefined) setTicketDate(res.ticket_date);
+      if (res.watched_date !== undefined) setWatchedDate(res.watched_date);
+      if (res.plan_date !== undefined) setPlanDate(res.plan_date);
+      setStatusDropdownOpen(false);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleAdvanceStatus = async () => {
+    if (!watchStatus) return;
+    const nextStatus = WATCH_STATUS_CONFIG[watchStatus]?.next;
+    if (nextStatus) {
+      await handleChangeStatus(nextStatus);
     }
   };
 
@@ -232,19 +308,105 @@ export default function FilmDetail() {
 
               <div className="mt-8">
                 <div className="flex flex-wrap gap-3">
-                  <button
-                    onClick={handleToggleFavorite}
-                    className={`px-6 py-2.5 rounded-lg font-medium transition-all inline-flex items-center gap-2 ${
-                      isFavorite
-                        ? 'bg-film-red text-white hover:bg-film-red/80'
-                        : 'bg-film-gold/10 text-film-gold border border-film-gold/50 hover:bg-film-gold/20'
-                    }`}
-                  >
-                    <svg className="w-4 h-4" fill={isFavorite ? 'currentColor' : 'none'} stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
-                    </svg>
-                    {isFavorite ? '已收藏' : '加入收藏'}
-                  </button>
+                  {!isFavorite ? (
+                    <>
+                      <div className="relative" ref={statusDropdownRef}>
+                        <button
+                          onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                          className="px-6 py-2.5 rounded-lg font-medium bg-film-gold/10 text-film-gold border border-film-gold/50 hover:bg-film-gold/20 transition-all inline-flex items-center gap-2"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                          </svg>
+                          加入观影计划
+                          <svg className="w-3 h-3 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {statusDropdownOpen && (
+                          <div className="absolute top-full left-0 mt-2 w-48 bg-film-dark border border-film-gray rounded-xl shadow-2xl overflow-hidden z-20">
+                            {Object.entries(WATCH_STATUS_CONFIG).map(([key, cfg]) => (
+                              <button
+                                key={key}
+                                onClick={() => handleToggleFavorite(key)}
+                                className="w-full px-4 py-2.5 text-left text-sm hover:bg-film-gray/50 flex items-center gap-2 transition-colors border-b border-film-gray/30 last:border-b-0"
+                              >
+                                <span>{cfg.icon}</span>
+                                <span>{cfg.label}</span>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="relative" ref={statusDropdownRef}>
+                        <button
+                          onClick={handleAdvanceStatus}
+                          disabled={!WATCH_STATUS_CONFIG[watchStatus]?.next}
+                          className={`px-6 py-2.5 rounded-lg font-medium transition-all inline-flex items-center gap-2 disabled:cursor-default ${WATCH_STATUS_CONFIG[watchStatus]?.activeColor || 'bg-film-gold/10 text-film-gold border border-film-gold/50'}`}
+                        >
+                          <span>{WATCH_STATUS_CONFIG[watchStatus]?.icon || '🎬'}</span>
+                          {WATCH_STATUS_CONFIG[watchStatus]?.label || '观影计划'}
+                          {WATCH_STATUS_CONFIG[watchStatus]?.next && (
+                            <svg className="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                            </svg>
+                          )}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                          e.stopPropagation();
+                          setStatusDropdownOpen(!statusDropdownOpen);
+                        }}
+                          className="px-3 py-2.5 rounded-lg font-medium bg-film-gray text-film-cream/70 hover:bg-film-gray/80 transition-all inline-flex items-center"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        {statusDropdownOpen && (
+                          <div className="absolute top-full left-0 mt-2 w-52 bg-film-dark border border-film-gray rounded-xl shadow-2xl overflow-hidden z-20">
+                            <div className="px-3 py-2 text-xs text-film-cream/40 border-b border-film-gray/30">切换状态</div>
+                            {Object.entries(WATCH_STATUS_CONFIG).map(([key, cfg]) => (
+                              <button
+                                key={key}
+                                onClick={() => handleChangeStatus(key)}
+                                className={`w-full px-4 py-2.5 text-left text-sm hover:bg-film-gray/50 flex items-center gap-2 transition-colors border-b border-film-gray/30 last:border-b-0 ${watchStatus === key ? 'bg-film-gold/10 text-film-gold' : ''}`}
+                              >
+                                <span>{cfg.icon}</span>
+                                <span className="flex-1">{cfg.label}</span>
+                                {watchStatus === key && (
+                                  <svg className="w-4 h-4 text-film-gold" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+                                  </svg>
+                                )}
+                              </button>
+                            ))}
+                            <div className="border-t border-film-gray/30">
+                              <button
+                                onClick={() => handleToggleFavorite()}
+                                className="w-full px-4 py-2.5 text-left text-sm hover:bg-film-red/10 flex items-center gap-2 transition-colors text-film-red"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656-5.656l1.414-1.414a4 4 0 00-5.656 5.656l-1.101 1.101" />
+                                </svg>
+                                移出观影计划
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      {watchStatus && (
+                        <div className="flex flex-wrap gap-2 text-xs text-film-cream/50 items-center py-2">
+                          {ticketDate && <span>🎟️ 购票于 {ticketDate}</span>}
+                          {watchedDate && <span>✅ 观看于 {watchedDate}</span>}
+                          {planDate && <span>📅 计划 {planDate}</span>}
+                        </div>
+                      )}
+                    </>
+                  )}
                   <button
                     onClick={() => setShowReviewForm(!showReviewForm)}
                     className="px-6 py-2.5 rounded-lg font-medium bg-film-gray text-film-cream hover:bg-film-gray/80 transition-all inline-flex items-center gap-2"

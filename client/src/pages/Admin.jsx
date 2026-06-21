@@ -36,6 +36,7 @@ export default function Admin() {
   const [activeCollection, setActiveCollection] = useState(null);
   const [reportFilter, setReportFilter] = useState('all');
   const [screeningVenueFilter, setScreeningVenueFilter] = useState('');
+  const [favoriteStatusFilter, setFavoriteStatusFilter] = useState('all');
   const [loading, setLoading] = useState(true);
   const [showFilmForm, setShowFilmForm] = useState(false);
   const [showScreeningForm, setShowScreeningForm] = useState(false);
@@ -313,6 +314,28 @@ export default function Admin() {
     }
   };
 
+  const handleUpdateFavoriteStatus = async (filmId, newStatus) => {
+    try {
+      const today = new Date().toISOString().split('T')[0];
+      const statusData = { watch_status: newStatus };
+      if (newStatus === 'ticketed') {
+        statusData.ticket_date = today;
+      } else if (newStatus === 'watched') {
+        statusData.watched_date = today;
+      }
+      await favApi.updateStatus(filmId, statusData);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const WATCH_STATUS_OPTIONS = [
+    { key: 'want_to_watch', label: '想看', icon: '👁️', color: 'text-blue-400 bg-blue-500/15' },
+    { key: 'ticketed', label: '已购票', icon: '🎟️', color: 'text-film-gold bg-film-gold/15' },
+    { key: 'watched', label: '已观看', icon: '✅', color: 'text-green-400 bg-green-500/15' },
+  ];
+
   const handleReport = async (reportId, status, handleNote = '') => {
     const confirmMsg = status === 'approved' ? '确定通过此举报？相关评论将被隐藏。' : '确定驳回此举报？';
     if (!confirm(confirmMsg)) return;
@@ -446,7 +469,7 @@ export default function Admin() {
     { key: 'screenings', label: '放映场次', icon: '📅' },
     { key: 'reviews', label: '短评管理', icon: '✍️' },
     { key: 'reports', label: '举报审核', icon: '🚨' },
-    { key: 'favorites', label: '收藏与提醒', icon: '🔔' },
+    { key: 'favorites', label: '观影计划', icon: '🎯' },
     { key: 'notifications', label: '通知中心', icon: '📬' },
   ];
 
@@ -1152,42 +1175,97 @@ export default function Admin() {
 
       {activeTab === 'favorites' && (
         <div>
-          <p className="text-film-cream/60 mb-6">共 {favoriteList.length} 部收藏影片，可单独配置提醒开关</p>
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+            <p className="text-film-cream/60">
+              共 {favoriteList.length} 部影片 · 想看 {favoriteList.filter(f => f.watch_status === 'want_to_watch').length} · 已购票 {favoriteList.filter(f => f.watch_status === 'ticketed').length} · 已观看 {favoriteList.filter(f => f.watch_status === 'watched').length}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setFavoriteStatusFilter('all')}
+                className={`px-3 py-1.5 text-sm rounded-lg transition-colors ${
+                  favoriteStatusFilter === 'all'
+                    ? 'bg-film-gold text-film-black'
+                    : 'bg-film-gray/50 text-film-cream/60 hover:text-film-cream'
+                }`}
+              >
+                全部
+              </button>
+              {WATCH_STATUS_OPTIONS.map(opt => (
+                <button
+                  key={opt.key}
+                  onClick={() => setFavoriteStatusFilter(opt.key)}
+                  className={`px-3 py-1.5 text-sm rounded-lg transition-colors inline-flex items-center gap-1.5 ${
+                    favoriteStatusFilter === opt.key
+                      ? 'bg-film-gold text-film-black'
+                      : 'bg-film-gray/50 text-film-cream/60 hover:text-film-cream'
+                  }`}
+                >
+                  <span>{opt.icon}</span>
+                  <span>{opt.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
           {favoriteList.length === 0 ? (
             <div className="py-16 text-center text-film-cream/50 border border-dashed border-film-gray rounded-xl">
-              暂无收藏影片
+              暂无观影计划
             </div>
           ) : (
             <div className="space-y-3">
-              {favoriteList.map(fav => (
+              {favoriteList
+                .filter(fav => favoriteStatusFilter === 'all' || fav.watch_status === favoriteStatusFilter)
+                .map(fav => (
                 <div key={fav.id} className="flex flex-wrap items-center gap-4 p-4 bg-film-dark/50 rounded-xl border border-film-gray/50">
                   <div className="w-12 h-16 bg-film-gray rounded overflow-hidden flex-shrink-0">
                     {fav.poster && <img src={fav.poster} alt="" className="w-full h-full object-cover" />}
                   </div>
                   <div className="flex-1 min-w-0">
-                    <Link to={`/films/${fav.film_id}`} className="font-medium hover:text-film-gold">{fav.title}</Link>
-                    <div className="text-xs text-film-cream/50 mt-0.5">
-                      {fav.director && `${fav.director} · `}{fav.year && `${fav.year}年`}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Link to={`/films/${fav.film_id}`} className="font-medium hover:text-film-gold">{fav.title}</Link>
+                      {(() => {
+                        const st = WATCH_STATUS_OPTIONS.find(s => s.key === (fav.watch_status || 'want_to_watch'));
+                        return st ? (
+                          <span className={`px-2 py-0.5 rounded text-xs inline-flex items-center gap-1 ${st.color}`}>
+                            <span>{st.icon}</span>
+                            <span>{st.label}</span>
+                          </span>
+                        ) : null;
+                      })()}
+                    </div>
+                    <div className="text-xs text-film-cream/50 mt-0.5 flex flex-wrap gap-3">
+                      {fav.director && <span>{fav.director}</span>}
+                      {fav.year && <span>{fav.year}年</span>}
+                      {fav.ticket_date && <span>🎟️ {fav.ticket_date}</span>}
+                      {fav.watched_date && <span>✅ {fav.watched_date}</span>}
                     </div>
                   </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label className="flex items-center gap-2 cursor-pointer">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={fav.watch_status || 'want_to_watch'}
+                      onChange={(e) => handleUpdateFavoriteStatus(fav.film_id, e.target.value)}
+                      className="px-3 py-1.5 text-sm bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                    >
+                      {WATCH_STATUS_OPTIONS.map(opt => (
+                        <option key={opt.key} value={opt.key}>{opt.icon} {opt.label}</option>
+                      ))}
+                    </select>
+                    <label className="flex items-center gap-2 cursor-pointer px-2">
                       <input
                         type="checkbox"
                         checked={!!fav.ticket_reminder_enabled}
                         onChange={(e) => handleUpdateFavoriteReminders(fav.film_id, 'ticket_reminder_enabled', e.target.checked)}
                         className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
                       />
-                      <span className="text-sm text-film-cream/80">🎟️ 开票提醒</span>
+                      <span className="text-xs text-film-cream/80">🎟️ 开票提醒</span>
                     </label>
-                    <label className="flex items-center gap-2 cursor-pointer">
+                    <label className="flex items-center gap-2 cursor-pointer px-2">
                       <input
                         type="checkbox"
                         checked={!!fav.schedule_change_reminder_enabled}
                         onChange={(e) => handleUpdateFavoriteReminders(fav.film_id, 'schedule_change_reminder_enabled', e.target.checked)}
                         className="w-4 h-4 rounded border-film-gray bg-film-black text-film-gold focus:ring-film-gold"
                       />
-                      <span className="text-sm text-film-cream/80">📅 放映变更</span>
+                      <span className="text-xs text-film-cream/80">📅 放映变更</span>
                     </label>
                   </div>
                 </div>

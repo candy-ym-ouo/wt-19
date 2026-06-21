@@ -67,19 +67,41 @@ export default function Home() {
             </div>
           </div>
           {statsData && (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-6 mt-16 max-w-3xl">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-16 max-w-4xl">
               {[
-                { label: '收录影片', value: statsData.filmCount },
-                { label: '策展专题', value: statsData.collectionCount },
-                { label: '放映场次', value: statsData.screeningCount },
-                { label: '观后短评', value: statsData.reviewCount },
-                { label: '心仪收藏', value: statsData.favoriteCount },
+                { label: '收录影片', value: statsData.filmCount, icon: '🎬' },
+                { label: '放映场次', value: statsData.screeningCount, icon: '📅' },
+                { label: '观后短评', value: statsData.reviewCount, icon: '✍️' },
+                { label: '策展专题', value: statsData.collectionCount, icon: '📚' },
               ].map(item => (
                 <div key={item.label} className="border-l-2 border-film-gold/50 pl-4">
+                  <div className="text-xs text-film-cream/40 mb-1">{item.icon}</div>
                   <div className="text-3xl font-serif font-bold text-film-gold">{item.value}</div>
                   <div className="text-sm text-film-cream/60 mt-1">{item.label}</div>
                 </div>
               ))}
+            </div>
+          )}
+          {statsData && (
+            <div className="mt-8 p-5 bg-film-dark/40 rounded-xl border border-film-gray/50">
+              <div className="text-sm text-film-cream/60 mb-4 font-medium">🎯 我的观影计划</div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="text-center p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
+                  <div className="text-2xl mb-1">👁️</div>
+                  <div className="text-2xl font-serif font-bold text-blue-400">{statsData.wantToWatchCount || 0}</div>
+                  <div className="text-xs text-blue-400/80 mt-1">想看</div>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-film-gold/10 border border-film-gold/30">
+                  <div className="text-2xl mb-1">🎟️</div>
+                  <div className="text-2xl font-serif font-bold text-film-gold">{statsData.ticketedCount || 0}</div>
+                  <div className="text-xs text-film-gold/80 mt-1">已购票</div>
+                </div>
+                <div className="text-center p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                  <div className="text-2xl mb-1">✅</div>
+                  <div className="text-2xl font-serif font-bold text-green-400">{statsData.watchedCount || 0}</div>
+                  <div className="text-xs text-green-400/80 mt-1">已观看</div>
+                </div>
+              </div>
             </div>
           )}
         </div>

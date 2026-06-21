@@ -75,7 +75,11 @@ app.get('/api/films/:id', (req, res) => {
     screenings,
     isFavorite: !!favorite,
     ticketReminderEnabled: favorite ? !!favorite.ticket_reminder_enabled : false,
-    scheduleChangeReminderEnabled: favorite ? !!favorite.schedule_change_reminder_enabled : false
+    scheduleChangeReminderEnabled: favorite ? !!favorite.schedule_change_reminder_enabled : false,
+    watchStatus: favorite ? favorite.watch_status : null,
+    ticketDate: favorite ? favorite.ticket_date : null,
+    watchedDate: favorite ? favorite.watched_date : null,
+    planDate: favorite ? favorite.plan_date : null
   });
 });
 
@@ -634,15 +638,25 @@ app.put('/api/reports/:id/handle', (req, res) => {
   res.json(updated);
 });
 
-// ============ 收藏夹 API ============
+// ============ 收藏夹/观影计划 API ============
+
+const VALID_WATCH_STATUS = ['want_to_watch', 'ticketed', 'watched'];
 
 app.get('/api/favorites', (req, res) => {
-  const favorites = db.prepare(`
+  const { watch_status } = req.query;
+  let sql = `
     SELECT fav.*, f.title, f.original_title, f.director, f.year, f.country, f.genre, f.poster, f.rating
     FROM favorites fav
     LEFT JOIN films f ON fav.film_id = f.id
-    ORDER BY fav.created_at DESC
-  `).all();
+    WHERE 1=1
+  `;
+  const params = [];
+  if (watch_status && VALID_WATCH_STATUS.includes(watch_status)) {
+    sql += ' AND fav.watch_status = ?';
+    params.push(watch_status);
+  }
+  sql += ' ORDER BY fav.updated_at DESC';
+  const favorites = db.prepare(sql).all(...params);
   res.json(favorites);
 });
 
@@ -655,12 +669,76 @@ app.post('/api/favorites/:filmId', (req, res) => {
   const existing = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.filmId);
   if (existing) {
     db.prepare('DELETE FROM favorites WHERE film_id = ?').run(req.params.filmId);
-    res.json({ message: '已从收藏夹移除', isFavorite: false });
+    res.json({ message: '已从观影计划移除', isFavorite: false });
   } else {
-    const { ticket_reminder_enabled = 1, schedule_change_reminder_enabled = 1 } = req.body;
-    db.prepare('INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled) VALUES (?, ?, ?)').run(req.params.filmId, ticket_reminder_enabled ? 1 : 0, schedule_change_reminder_enabled ? 1 : 0);
-    res.status(201).json({ message: '已添加到收藏夹', isFavorite: true, ticket_reminder_enabled: !!ticket_reminder_enabled, schedule_change_reminder_enabled: !!schedule_change_reminder_enabled });
+    const {
+      ticket_reminder_enabled = 1,
+      schedule_change_reminder_enabled = 1,
+      watch_status = 'want_to_watch',
+      ticket_date,
+      watched_date,
+      plan_date
+    } = req.body;
+    const finalStatus = VALID_WATCH_STATUS.includes(watch_status) ? watch_status : 'want_to_watch';
+    db.prepare(`
+      INSERT INTO favorites (film_id, ticket_reminder_enabled, schedule_change_reminder_enabled, watch_status, ticket_date, watched_date, plan_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      req.params.filmId,
+      ticket_reminder_enabled ? 1 : 0,
+      schedule_change_reminder_enabled ? 1 : 0,
+      finalStatus,
+      ticket_date || null,
+      watched_date || null,
+      plan_date || null
+    );
+    res.status(201).json({
+      message: '已添加到观影计划',
+      isFavorite: true,
+      ticket_reminder_enabled: !!ticket_reminder_enabled,
+      schedule_change_reminder_enabled: !!schedule_change_reminder_enabled,
+      watch_status: finalStatus,
+      ticket_date: ticket_date || null,
+      watched_date: watched_date || null,
+      plan_date: plan_date || null
+    });
   }
+});
+
+app.put('/api/favorites/:filmId/status', (req, res) => {
+  const existing = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.filmId);
+  if (!existing) {
+    return res.status(404).json({ error: '影片未在观影计划中' });
+  }
+
+  const { watch_status, ticket_date, watched_date, plan_date } = req.body;
+  if (!watch_status || !VALID_WATCH_STATUS.includes(watch_status)) {
+    return res.status(400).json({ error: '无效的观影状态' });
+  }
+
+  db.prepare(`
+    UPDATE favorites SET
+      watch_status = ?,
+      ticket_date = ?,
+      watched_date = ?,
+      plan_date = ?,
+      updated_at = CURRENT_TIMESTAMP
+    WHERE film_id = ?
+  `).run(
+    watch_status,
+    ticket_date !== undefined ? (ticket_date || null) : existing.ticket_date,
+    watched_date !== undefined ? (watched_date || null) : existing.watched_date,
+    plan_date !== undefined ? (plan_date || null) : existing.plan_date,
+    req.params.filmId
+  );
+
+  const updated = db.prepare('SELECT * FROM favorites WHERE film_id = ?').get(req.params.filmId);
+  res.json({
+    watch_status: updated.watch_status,
+    ticket_date: updated.ticket_date,
+    watched_date: updated.watched_date,
+    plan_date: updated.plan_date
+  });
 });
 
 app.put('/api/favorites/:filmId/reminders', (req, res) => {
@@ -694,7 +772,7 @@ app.delete('/api/favorites/:filmId', (req, res) => {
   if (info.changes === 0) {
     return res.status(404).json({ error: '收藏不存在' });
   }
-  res.json({ message: '已从收藏夹移除' });
+  res.json({ message: '已从观影计划移除' });
 });
 
 // ============ 通知 API ============
@@ -991,6 +1069,9 @@ app.get('/api/stats', (req, res) => {
   const venueCount = db.prepare('SELECT COUNT(*) as count FROM venues').get().count;
   const reviewCount = db.prepare('SELECT COUNT(*) as count FROM reviews').get().count;
   const favoriteCount = db.prepare('SELECT COUNT(*) as count FROM favorites').get().count;
+  const wantToWatchCount = db.prepare("SELECT COUNT(*) as count FROM favorites WHERE watch_status = 'want_to_watch'").get().count;
+  const ticketedCount = db.prepare("SELECT COUNT(*) as count FROM favorites WHERE watch_status = 'ticketed'").get().count;
+  const watchedCount = db.prepare("SELECT COUNT(*) as count FROM favorites WHERE watch_status = 'watched'").get().count;
   const unreadNotificationCount = db.prepare('SELECT COUNT(*) as count FROM notifications WHERE is_read = 0').get().count;
   const pendingReportCount = db.prepare('SELECT COUNT(*) as count FROM reports WHERE status = ?').get('pending').count;
   const collectionCount = db.prepare('SELECT COUNT(*) as count FROM collections WHERE is_active = 1').get().count;
@@ -1034,6 +1115,9 @@ app.get('/api/stats', (req, res) => {
     venueCount,
     reviewCount,
     favoriteCount,
+    wantToWatchCount,
+    ticketedCount,
+    watchedCount,
     unreadNotificationCount,
     pendingReportCount,
     collectionCount,
