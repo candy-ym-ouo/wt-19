@@ -21,6 +21,10 @@ db.exec(`
     synopsis TEXT,
     poster TEXT,
     rating REAL,
+    awards TEXT,
+    restoration_version TEXT,
+    premiere_info TEXT,
+    aliases TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
@@ -246,8 +250,8 @@ db.exec(`
 const filmCount = db.prepare('SELECT COUNT(*) as count FROM films').get().count;
 if (filmCount === 0) {
   const insertFilm = db.prepare(`
-    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating, awards, restoration_version, premiere_info, aliases)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   const insertScreening = db.prepare(`
@@ -277,7 +281,11 @@ if (filmCount === 0) {
       language: '粤语',
       synopsis: '1962年的香港，报社编辑周慕云与妻子搬进一幢上海人聚居的公寓，认识了隔壁的陈太太苏丽珍。两人发现各自的配偶有染后，开始互相接触并逐渐产生情感。',
       poster: 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?w=400&h=600&fit=crop',
-      rating: 8.7
+      rating: 8.7,
+      awards: '第53届戛纳电影节最佳男演员（梁朝伟）、最佳艺术贡献；第37届金马奖最佳女主角、最佳摄影、最佳造型设计、最佳原创音乐',
+      restoration_version: '4K修复版',
+      premiere_info: '2000-05-20 戛纳电影节首映；2000-09-29 中国香港上映',
+      aliases: 'In the Mood for Love / 花樣年華'
     },
     {
       title: '重庆森林',
@@ -290,7 +298,11 @@ if (filmCount === 0) {
       language: '粤语/普通话',
       synopsis: '故事分为两段。第一段讲述失恋的警察223与神秘金发女郎在重庆大厦的邂逅。第二段讲述另一位警察663与快餐店女店员的故事。',
       poster: 'https://images.unsplash.com/photo-1440404653325-ab127d49abc1?w=400&h=600&fit=crop',
-      rating: 8.8
+      rating: 8.8,
+      awards: '第31届金马奖最佳剧情片、最佳导演、最佳男主角、最佳剪辑；第14届香港电影金像奖最佳影片、最佳导演、最佳男主角',
+      restoration_version: '2K修复版',
+      premiere_info: '1994-07-14 中国香港上映',
+      aliases: 'Chungking Express / 重慶森林'
     },
     {
       title: '四百击',
@@ -303,7 +315,11 @@ if (filmCount === 0) {
       language: '法语',
       synopsis: '12岁的安托万在学校和家庭中都得不到理解，他逃学、撒谎，最终被送进管教所。在一次逃跑中，他奔向大海，获得了短暂的自由。',
       poster: 'https://images.unsplash.com/photo-1478720568477-152d9b164e26?w=400&h=600&fit=crop',
-      rating: 8.9
+      rating: 8.9,
+      awards: '第12届戛纳电影节最佳导演奖；法国电影凯撒奖最佳影片提名',
+      restoration_version: '4K修复版',
+      premiere_info: '1959-05-04 戛纳电影节首映；1959-06-03 法国上映',
+      aliases: 'The 400 Blows / 胡作非为 / 四百下'
     },
     {
       title: '东京物语',
@@ -316,7 +332,11 @@ if (filmCount === 0) {
       language: '日语',
       synopsis: '一对住在乡下的老夫妇到东京探望已成家的子女，却发现子女们都忙于自己的生活，对他们态度冷淡。只有守寡的二儿媳纪子真心对待他们。',
       poster: 'https://images.unsplash.com/photo-1485846234645-a62644f84728?w=400&h=600&fit=crop',
-      rating: 9.3
+      rating: 9.3,
+      awards: '第1届柏林国际电影节金熊奖提名；被《视与听》杂志评选为影史十大电影第一名',
+      restoration_version: '4K修复版（2020年）',
+      premiere_info: '1953-11-03 日本上映',
+      aliases: 'Tokyo Story / 東京物語'
     },
     {
       title: '八部半',
@@ -329,7 +349,11 @@ if (filmCount === 0) {
       language: '意大利语',
       synopsis: '电影导演圭多在筹备新片时陷入创作危机，同时还要处理与妻子、情人、制片人等复杂的人际关系，现实与幻想交织在一起。',
       poster: 'https://images.unsplash.com/photo-1594909122845-11baa439b7bf?w=400&h=600&fit=crop',
-      rating: 8.6
+      rating: 8.6,
+      awards: '第36届奥斯卡金像奖最佳外语片、最佳服装设计；第24届威尼斯电影节金狮奖',
+      restoration_version: '4K修复版',
+      premiere_info: '1963-02-14 意大利上映',
+      aliases: 'Eight and a Half / 八又二分之一 / 8½'
     },
     {
       title: '乡愁',
@@ -342,7 +366,11 @@ if (filmCount === 0) {
       language: '俄语/意大利语',
       synopsis: '俄国诗人戈尔恰科夫到意大利寻访一位作曲家的生平，遇见了被认为是疯子的多米尼克。两人在精神上产生了深深的共鸣。',
       poster: 'https://images.unsplash.com/photo-1536440136628-849c177e76a1?w=400&h=600&fit=crop',
-      rating: 9.1
+      rating: 9.1,
+      awards: '第36届戛纳电影节最佳导演奖、费比西奖、普普通通评审团奖',
+      restoration_version: '2K修复版',
+      premiere_info: '1983-05-17 戛纳电影节首映；1984-01-08 意大利上映',
+      aliases: 'Nostalgia / Ностальгия / 怀乡'
     }
   ];
 
@@ -350,7 +378,8 @@ if (filmCount === 0) {
     const info = insertFilm.run(
       film.title, film.original_title, film.director, film.year,
       film.country, film.genre, film.duration, film.language,
-      film.synopsis, film.poster, film.rating
+      film.synopsis, film.poster, film.rating,
+      film.awards, film.restoration_version, film.premiere_info, film.aliases
     );
     return info.lastInsertRowid;
   });
@@ -442,6 +471,17 @@ if (filmCount === 0) {
   insertCollectionFilm.run(col3, filmIds[5], 3, '塔可夫斯基的精神漫游');
 
   console.log('✅ 示例数据已初始化');
+}
+
+const filmColumns = db.prepare("PRAGMA table_info(films)").all();
+const filmColNames = filmColumns.map(c => c.name);
+if (!filmColNames.includes('awards')) {
+  db.exec(`
+    ALTER TABLE films ADD COLUMN awards TEXT;
+    ALTER TABLE films ADD COLUMN restoration_version TEXT;
+    ALTER TABLE films ADD COLUMN premiere_info TEXT;
+    ALTER TABLE films ADD COLUMN aliases TEXT;
+  `);
 }
 
 const recColumns = db.prepare("PRAGMA table_info(recommendations)").all();

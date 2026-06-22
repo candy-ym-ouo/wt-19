@@ -4,7 +4,8 @@ import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, 
 
 const emptyFilm = {
   title: '', original_title: '', director: '', year: '', country: '',
-  genre: '', duration: '', language: '', synopsis: '', poster: '', rating: ''
+  genre: '', duration: '', language: '', synopsis: '', poster: '', rating: '',
+  awards: '', restoration_version: '', premiere_info: '', aliases: ''
 };
 
 const emptyScreening = {
@@ -143,7 +144,11 @@ export default function Admin() {
       language: film.language || '',
       synopsis: film.synopsis || '',
       poster: film.poster || '',
-      rating: film.rating || ''
+      rating: film.rating || '',
+      awards: film.awards || '',
+      restoration_version: film.restoration_version || '',
+      premiere_info: film.premiere_info || '',
+      aliases: film.aliases || ''
     });
     setShowFilmForm(true);
   };
@@ -2310,6 +2315,46 @@ export default function Admin() {
                     value={filmForm.synopsis}
                     onChange={(e) => setFilmForm({ ...filmForm, synopsis: e.target.value })}
                     rows={4}
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">别名</label>
+                  <input
+                    type="text"
+                    value={filmForm.aliases}
+                    onChange={(e) => setFilmForm({ ...filmForm, aliases: e.target.value })}
+                    placeholder="多个别名用 / 分隔"
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">修复版本</label>
+                  <input
+                    type="text"
+                    value={filmForm.restoration_version}
+                    onChange={(e) => setFilmForm({ ...filmForm, restoration_version: e.target.value })}
+                    placeholder="如 4K修复版"
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">首映信息</label>
+                  <input
+                    type="text"
+                    value={filmForm.premiere_info}
+                    onChange={(e) => setFilmForm({ ...filmForm, premiere_info: e.target.value })}
+                    placeholder="如 2000-05-20 戛纳电影节首映"
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="md:col-span-2">
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">获奖情况</label>
+                  <textarea
+                    value={filmForm.awards}
+                    onChange={(e) => setFilmForm({ ...filmForm, awards: e.target.value })}
+                    rows={3}
+                    placeholder="列出主要获奖情况，用分号分隔"
                     className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
                   />
                 </div>

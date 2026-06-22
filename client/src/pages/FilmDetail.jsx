@@ -482,6 +482,8 @@ export default function FilmDetail() {
                   { label: '类型', value: film.genre },
                   { label: '片长', value: film.duration ? `${film.duration} 分钟` : null },
                   { label: '语言', value: film.language },
+                  { label: '首映', value: film.premiere_info },
+                  { label: '修复版本', value: film.restoration_version },
                 ].filter(x => x.value).map(item => (
                   <div key={item.label}>
                     <div className="text-xs text-film-cream/40 tracking-wider uppercase">{item.label}</div>
@@ -489,6 +491,13 @@ export default function FilmDetail() {
                   </div>
                 ))}
               </div>
+
+              {film.aliases && (
+                <div className="mt-4">
+                  <div className="text-xs text-film-cream/40 tracking-wider uppercase mb-1">别名</div>
+                  <div className="text-film-cream/70 text-sm">{film.aliases}</div>
+                </div>
+              )}
 
               <div className="mt-8">
                 <div className="flex flex-wrap gap-3">
@@ -732,6 +741,22 @@ export default function FilmDetail() {
                   <p className="text-film-cream/80 leading-relaxed font-serif text-lg">
                     {film.synopsis}
                   </p>
+                </div>
+              )}
+
+              {film.awards && (
+                <div className="mt-8">
+                  <h3 className="text-sm text-film-gold tracking-wider uppercase mb-3">获奖情况</h3>
+                  <div className="text-film-cream/80 leading-relaxed text-sm space-y-2">
+                    {film.awards.split(/[；;]/).map((award, idx) => (
+                      award.trim() && (
+                        <div key={idx} className="flex items-start gap-2">
+                          <span className="text-film-gold mt-0.5">🏆</span>
+                          <span>{award.trim()}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

@@ -69,7 +69,7 @@ function parseCsv(text) {
   return { headers, rows };
 }
 
-const FILM_CSV_HEADERS = ['title', 'original_title', 'director', 'year', 'country', 'genre', 'duration', 'language', 'synopsis', 'poster', 'rating'];
+const FILM_CSV_HEADERS = ['title', 'original_title', 'director', 'year', 'country', 'genre', 'duration', 'language', 'synopsis', 'poster', 'rating', 'awards', 'restoration_version', 'premiere_info', 'aliases'];
 const SCREENING_CSV_HEADERS = ['film_title', 'screening_date', 'screening_time', 'venue_name', 'location', 'notes', 'ticket_status', 'ticket_open_date', 'is_changed', 'change_description'];
 
 const VALID_TICKET_STATUSES = ['not_open', 'on_sale', 'sold_out'];
@@ -127,7 +127,7 @@ app.get('/api/films', (req, res) => {
 
 app.get('/api/films/template', (req, res) => {
   const headerLine = FILM_CSV_HEADERS.join(',');
-  const exampleLine = ['花样年华', 'In the Mood for Love', '王家卫', '2000', '中国香港', '剧情/爱情', '98', '粤语', '1962年的香港故事', '', '8.7'].map(csvEscape).join(',');
+  const exampleLine = ['花样年华', 'In the Mood for Love', '王家卫', '2000', '中国香港', '剧情/爱情', '98', '粤语', '1962年的香港故事', '', '8.7', '戛纳电影节最佳男演员', '4K修复版', '2000-05-20 戛纳首映', '花樣年華 / In the Mood for Love'].map(csvEscape).join(',');
   const csv = '\uFEFF' + headerLine + '\n' + exampleLine + '\n';
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename=films_template.csv');
@@ -177,8 +177,8 @@ app.post('/api/films/import', upload.single('file'), (req, res) => {
   const skipped = [];
   const validRecords = [];
   const insertFilm = db.prepare(`
-    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating, awards, restoration_version, premiere_info, aliases)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const findDuplicate = db.prepare(`
     SELECT id FROM films WHERE title = ? AND (director = ? OR (? IS NULL AND director IS NULL)) AND (year = ? OR (? IS NULL AND year IS NULL))
@@ -204,6 +204,10 @@ app.post('/api/films/import', upload.single('file'), (req, res) => {
     const synopsis = row.synopsis ? row.synopsis.trim() : null;
     const poster = row.poster ? row.poster.trim() : null;
     const rating = row.rating ? parseFloat(row.rating) : null;
+    const awards = row.awards ? row.awards.trim() : null;
+    const restorationVersion = row.restoration_version ? row.restoration_version.trim() : null;
+    const premiereInfo = row.premiere_info ? row.premiere_info.trim() : null;
+    const aliases = row.aliases ? row.aliases.trim() : null;
 
     if (row.year && isNaN(parseInt(row.year))) {
       errors.push({ row: rowNum, data: row, message: '年份格式不正确' });
@@ -224,7 +228,7 @@ app.post('/api/films/import', upload.single('file'), (req, res) => {
       continue;
     }
 
-    validRecords.push({ rowNum, title, originalTitle, director, year, country, genre, duration, language, synopsis, poster, rating });
+    validRecords.push({ rowNum, title, originalTitle, director, year, country, genre, duration, language, synopsis, poster, rating, awards, restorationVersion, premiereInfo, aliases });
   }
 
   if (errors.length > 0) {
@@ -243,7 +247,7 @@ app.post('/api/films/import', upload.single('file'), (req, res) => {
   const transaction = db.transaction((records) => {
     for (const r of records) {
       try {
-        const info = insertFilm.run(r.title, r.originalTitle, r.director, r.year, r.country, r.genre, r.duration, r.language, r.synopsis, r.poster, r.rating);
+        const info = insertFilm.run(r.title, r.originalTitle, r.director, r.year, r.country, r.genre, r.duration, r.language, r.synopsis, r.poster, r.rating, r.awards, r.restorationVersion, r.premiereInfo, r.aliases);
         success.push({ row: r.rowNum, id: info.lastInsertRowid, title: r.title });
       } catch (err) {
         throw new Error(`第${r.rowNum}行写入失败：${err.message}`);
@@ -300,15 +304,15 @@ app.get('/api/films/:id', (req, res) => {
 });
 
 app.post('/api/films', (req, res) => {
-  const { title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating } = req.body;
+  const { title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating, awards, restoration_version, premiere_info, aliases } = req.body;
   if (!title) {
     return res.status(400).json({ error: '影片标题不能为空' });
   }
 
   const info = db.prepare(`
-    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(title, original_title || null, director || null, year || null, country || null, genre || null, duration || null, language || null, synopsis || null, poster || null, rating || null);
+    INSERT INTO films (title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating, awards, restoration_version, premiere_info, aliases)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(title, original_title || null, director || null, year || null, country || null, genre || null, duration || null, language || null, synopsis || null, poster || null, rating || null, awards || null, restoration_version || null, premiere_info || null, aliases || null);
 
   const film = db.prepare('SELECT * FROM films WHERE id = ?').get(info.lastInsertRowid);
   res.status(201).json(film);
@@ -320,10 +324,10 @@ app.put('/api/films/:id', (req, res) => {
     return res.status(404).json({ error: '影片不存在' });
   }
 
-  const { title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating } = req.body;
+  const { title, original_title, director, year, country, genre, duration, language, synopsis, poster, rating, awards, restoration_version, premiere_info, aliases } = req.body;
 
   db.prepare(`
-    UPDATE films SET title = ?, original_title = ?, director = ?, year = ?, country = ?, genre = ?, duration = ?, language = ?, synopsis = ?, poster = ?, rating = ?
+    UPDATE films SET title = ?, original_title = ?, director = ?, year = ?, country = ?, genre = ?, duration = ?, language = ?, synopsis = ?, poster = ?, rating = ?, awards = ?, restoration_version = ?, premiere_info = ?, aliases = ?
     WHERE id = ?
   `).run(
     title || existing.title,
@@ -337,6 +341,10 @@ app.put('/api/films/:id', (req, res) => {
     synopsis !== undefined ? synopsis : existing.synopsis,
     poster !== undefined ? poster : existing.poster,
     rating !== undefined ? rating : existing.rating,
+    awards !== undefined ? awards : existing.awards,
+    restoration_version !== undefined ? restoration_version : existing.restoration_version,
+    premiere_info !== undefined ? premiere_info : existing.premiere_info,
+    aliases !== undefined ? aliases : existing.aliases,
     req.params.id
   );
 
