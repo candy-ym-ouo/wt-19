@@ -2106,6 +2106,290 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
+// ============ 个性化推荐 API ============
+
+const MOOD_SCORE_MAP = {
+  '感动': 8, '震撼': 9, '沉思': 7, '愉悦': 6, '温暖': 7,
+  '忧伤': 6, '惊喜': 8, '失望': 2, '愤怒': 3, '困惑': 4,
+};
+
+function generateAlgorithmRecommendations(limit = 12) {
+  const allFilms = db.prepare('SELECT * FROM films').all();
+  const allFavs = db.prepare('SELECT * FROM favorites').all();
+  const allReviews = db.prepare('SELECT * FROM reviews WHERE is_hidden = 0').all();
+  const allScreenings = db.prepare(`
+    SELECT s.*, f.duration as film_duration
+    FROM screenings s LEFT JOIN films f ON s.film_id = f.id
+  `).all();
+
+  const favMap = new Map();
+  allFavs.forEach(f => favMap.set(f.film_id, f));
+
+  const reviewsByFilm = new Map();
+  allReviews.forEach(r => {
+    if (!reviewsByFilm.has(r.film_id)) reviewsByFilm.set(r.film_id, []);
+    reviewsByFilm.get(r.film_id).push(r);
+  });
+
+  const screeningsByFilm = new Map();
+  allScreenings.forEach(s => {
+    if (!screeningsByFilm.has(s.film_id)) screeningsByFilm.set(s.film_id, []);
+    screeningsByFilm.get(s.film_id).push(s);
+  });
+
+  const now = new Date();
+  const today = now.toISOString().split('T')[0];
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  const scored = allFilms.map(film => {
+    let score = 0;
+    const reasons = [];
+    const fav = favMap.get(film.id);
+    const reviews = reviewsByFilm.get(film.id) || [];
+    const screenings = screeningsByFilm.get(film.id) || [];
+
+    if (fav) {
+      score += 30;
+      reasons.push('已收藏');
+      if (fav.watch_status === 'watched') {
+        score += 10;
+        reasons.push('已观看');
+      } else if (fav.watch_status === 'ticketed') {
+        score += 15;
+        reasons.push('已购票');
+      }
+      if (fav.ticket_reminder_enabled) score += 5;
+      if (fav.schedule_change_reminder_enabled) score += 5;
+    }
+
+    if (film.rating) {
+      const ratingScore = film.rating * 3;
+      score += ratingScore;
+      if (film.rating >= 8.5) reasons.push('高分佳作');
+    }
+
+    if (reviews.length > 0) {
+      const avgRating = reviews.reduce((sum, r) => sum + (r.rating || 0), 0) / reviews.length;
+      score += avgRating * 4;
+
+      let moodScore = 0;
+      reviews.forEach(r => {
+        if (r.mood) {
+          moodScore += MOOD_SCORE_MAP[r.mood] || 5;
+          if (MOOD_SCORE_MAP[r.mood] >= 7) reasons.push(`心情「${r.mood}」`);
+        }
+      });
+      score += (moodScore / Math.max(reviews.length, 1)) * 0.5;
+
+      const recentReviews = reviews.filter(r => r.created_at >= thirtyDaysAgo || r.watched_date >= thirtyDaysAgo);
+      if (recentReviews.length > 0) {
+        score += recentReviews.length * 8;
+        reasons.push(`近期有${recentReviews.length}条短评`);
+      }
+    }
+
+    if (screenings.length > 0) {
+      const upcomingScreenings = screenings.filter(s => s.screening_date >= today);
+      if (upcomingScreenings.length > 0) {
+        score += upcomingScreenings.length * 12;
+        reasons.push(`即将放映（${upcomingScreenings.length}场）`);
+        const nearest = upcomingScreenings.sort((a, b) => a.screening_date.localeCompare(b.screening_date))[0];
+        const daysUntil = Math.ceil((new Date(nearest.screening_date) - now) / (24 * 60 * 60 * 1000));
+        if (daysUntil <= 7) score += 15;
+        else if (daysUntil <= 14) score += 10;
+      }
+
+      const recentScreenings = screenings.filter(s => s.screening_date >= thirtyDaysAgo && s.screening_date <= today);
+      if (recentScreenings.length > 0) {
+        score += recentScreenings.length * 6;
+        reasons.push('近期放映');
+      }
+    }
+
+    if (!fav && film.rating >= 8) {
+      score += 8;
+      reasons.push('值得收藏');
+    }
+
+    return {
+      ...film,
+      algorithm_score: score,
+      match_reasons: [...new Set(reasons)].slice(0, 4),
+    };
+  });
+
+  scored.sort((a, b) => b.algorithm_score - a.algorithm_score);
+  return scored.slice(0, limit);
+}
+
+app.get('/api/recommendations', (req, res) => {
+  const { limit = 12 } = req.query;
+  const limitNum = Math.min(Math.max(Number(limit) || 12, 1), 30);
+
+  const manualRecs = db.prepare(`
+    SELECT r.*, f.title, f.original_title, f.director, f.year, f.country, f.genre,
+           f.duration, f.language, f.synopsis, f.poster, f.rating
+    FROM recommendations r
+    LEFT JOIN films f ON r.film_id = f.id
+    WHERE r.is_manual = 1 AND r.is_active = 1
+    ORDER BY r.sort_order ASC, r.created_at DESC
+  `).all();
+
+  const manualFilmIds = new Set(manualRecs.map(r => r.film_id));
+  const algoRecs = generateAlgorithmRecommendations(limitNum * 2)
+    .filter(r => !manualFilmIds.has(r.id));
+
+  const merged = [];
+
+  manualRecs.forEach(r => {
+    merged.push({
+      id: r.id,
+      film_id: r.film_id,
+      title: r.title,
+      original_title: r.original_title,
+      director: r.director,
+      year: r.year,
+      country: r.country,
+      genre: r.genre,
+      duration: r.duration,
+      language: r.language,
+      synopsis: r.synopsis,
+      poster: r.poster,
+      rating: r.rating,
+      sort_order: r.sort_order,
+      is_manual: true,
+      reason: r.reason || '编辑推荐',
+      match_reasons: r.reason ? [r.reason] : ['编辑推荐'],
+      note: r.note,
+      algorithm_score: r.algorithm_score || 0,
+    });
+  });
+
+  merged.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+
+  const remainingSlots = limitNum - merged.length;
+  if (remainingSlots > 0) {
+    algoRecs.slice(0, remainingSlots).forEach(r => {
+      merged.push({
+        id: null,
+        film_id: r.id,
+        title: r.title,
+        original_title: r.original_title,
+        director: r.director,
+        year: r.year,
+        country: r.country,
+        genre: r.genre,
+        duration: r.duration,
+        language: r.language,
+        synopsis: r.synopsis,
+        poster: r.poster,
+        rating: r.rating,
+        sort_order: 9999,
+        is_manual: false,
+        reason: null,
+        match_reasons: r.match_reasons,
+        note: null,
+        algorithm_score: r.algorithm_score,
+      });
+    });
+  }
+
+  res.json({
+    recommendations: merged,
+    meta: {
+      total: merged.length,
+      manual_count: manualRecs.length,
+      algorithm_count: merged.filter(r => !r.is_manual).length,
+    },
+  });
+});
+
+app.get('/api/recommendations/manual', (req, res) => {
+  const recs = db.prepare(`
+    SELECT r.*, f.title, f.poster, f.director, f.year
+    FROM recommendations r
+    LEFT JOIN films f ON r.film_id = f.id
+    WHERE r.is_manual = 1
+    ORDER BY r.sort_order ASC, r.created_at DESC
+  `).all();
+  res.json(recs);
+});
+
+app.post('/api/recommendations/manual', (req, res) => {
+  const { film_id, sort_order = 0, reason, note } = req.body;
+  if (!film_id) {
+    return res.status(400).json({ error: '影片ID不能为空' });
+  }
+  const film = db.prepare('SELECT * FROM films WHERE id = ?').get(film_id);
+  if (!film) {
+    return res.status(404).json({ error: '影片不存在' });
+  }
+  try {
+    const info = db.prepare(`
+      INSERT INTO recommendations (film_id, sort_order, is_manual, reason, note, algorithm_score)
+      VALUES (?, ?, 1, ?, ?, 0)
+    `).run(film_id, sort_order, reason || null, note || null);
+
+    const rec = db.prepare(`
+      SELECT r.*, f.title, f.poster, f.director, f.year
+      FROM recommendations r LEFT JOIN films f ON r.film_id = f.id
+      WHERE r.id = ?
+    `).get(info.lastInsertRowid);
+    res.status(201).json(rec);
+  } catch (err) {
+    if (err.message.includes('UNIQUE')) {
+      return res.status(400).json({ error: '该影片已在人工推荐中' });
+    }
+    throw err;
+  }
+});
+
+app.put('/api/recommendations/manual/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM recommendations WHERE id = ? AND is_manual = 1').get(req.params.id);
+  if (!existing) {
+    return res.status(404).json({ error: '推荐不存在' });
+  }
+  const { sort_order, reason, note, is_active } = req.body;
+  db.prepare(`
+    UPDATE recommendations SET
+      sort_order = ?, reason = ?, note = ?, is_active = ?, updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(
+    sort_order !== undefined ? sort_order : existing.sort_order,
+    reason !== undefined ? reason : existing.reason,
+    note !== undefined ? note : existing.note,
+    is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active,
+    req.params.id
+  );
+  const rec = db.prepare(`
+    SELECT r.*, f.title, f.poster, f.director, f.year
+    FROM recommendations r LEFT JOIN films f ON r.film_id = f.id
+    WHERE r.id = ?
+  `).get(req.params.id);
+  res.json(rec);
+});
+
+app.delete('/api/recommendations/manual/:id', (req, res) => {
+  const info = db.prepare('DELETE FROM recommendations WHERE id = ? AND is_manual = 1').run(req.params.id);
+  if (info.changes === 0) {
+    return res.status(404).json({ error: '推荐不存在' });
+  }
+  res.json({ message: '删除成功' });
+});
+
+app.get('/api/recommendations/refresh', (req, res) => {
+  const algoRecs = generateAlgorithmRecommendations(20);
+  db.prepare('DELETE FROM recommendations WHERE is_manual = 0').run();
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO recommendations (film_id, sort_order, is_manual, reason, algorithm_score, is_active)
+    VALUES (?, ?, 0, ?, ?, 1)
+  `);
+  algoRecs.forEach((r, idx) => {
+    insert.run(r.id, idx, r.match_reasons.join('、') || null, r.algorithm_score);
+  });
+  res.json({ refreshed: algoRecs.length });
+});
+
 app.listen(PORT, () => {
   console.log(`🚀 后端服务运行在 http://localhost:${PORT}`);
 });

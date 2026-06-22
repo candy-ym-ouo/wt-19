@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films, stats, screenings, collections as collectionsApi, watchTasks } from '../api.js';
+import { films, stats, screenings, collections as collectionsApi, watchTasks, recommendations as recApi } from '../api.js';
 import FilmCard from '../components/FilmCard.jsx';
 
 const typeLabels = {
@@ -23,6 +23,7 @@ export default function Home() {
   const [featuredCollections, setFeaturedCollections] = useState([]);
   const [similarRecommendations, setSimilarRecommendations] = useState([]);
   const [watchTasksData, setWatchTasksData] = useState(null);
+  const [personalizedRecs, setPersonalizedRecs] = useState({ recommendations: [], meta: null });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -32,10 +33,12 @@ export default function Home() {
       screenings.list(),
       collectionsApi.list({ featured: 1 }),
       watchTasks.list({ status: 'pending' }),
-    ]).then(async ([f, s, sc, cols, wt]) => {
+      recApi.list({ limit: 8 }),
+    ]).then(async ([f, s, sc, cols, wt, pr]) => {
       setFeaturedFilms(f);
       setStatsData(s);
       setWatchTasksData(wt);
+      setPersonalizedRecs(pr);
       const today = new Date().toISOString().split('T')[0];
       setUpcoming(sc.filter(x => x.screening_date >= today).slice(0, 5));
       setFeaturedCollections(cols.slice(0, 3));
@@ -267,6 +270,69 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {personalizedRecs.recommendations && personalizedRecs.recommendations.length > 0 && (
+        <section className="bg-gradient-to-b from-transparent via-film-gold/5 to-transparent">
+          <div className="max-w-7xl mx-auto px-6 py-16">
+            <div className="flex items-end justify-between mb-10">
+              <div>
+                <div className="flex items-center gap-3 mb-2">
+                  <h2 className="text-2xl md:text-3xl font-serif font-bold">为你推荐</h2>
+                  <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-film-gold/15 text-film-gold border border-film-gold/30">
+                    <span>✨</span>
+                    个性化
+                  </span>
+                </div>
+                <p className="text-film-cream/60 mt-1">
+                  结合你的收藏、观影记录、心情标签与近期放映智能生成
+                  {personalizedRecs.meta && (
+                    <span className="ml-2 text-film-cream/40">
+                      （人工推荐 {personalizedRecs.meta.manual_count} 部 · 算法推荐 {personalizedRecs.meta.algorithm_count} 部）
+                    </span>
+                  )}
+                </p>
+              </div>
+              <Link to="/films" className="text-film-gold hover:underline text-sm">
+                发现更多 →
+              </Link>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-5">
+              {personalizedRecs.recommendations.map((rec, idx) => (
+                <div key={`rec-${rec.film_id}-${idx}`} className="group relative">
+                  <Link to={`/films/${rec.film_id}`} className="block">
+                    <FilmCard film={rec} showFavorite={false} />
+                  </Link>
+                  <div className="mt-3 space-y-1.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      {rec.is_manual ? (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-film-gold/20 text-film-gold border border-film-gold/40 font-medium">
+                          ⭐ 编辑精选
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                          🤖 智能推荐
+                        </span>
+                      )}
+                    </div>
+                    {rec.match_reasons && rec.match_reasons.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {rec.match_reasons.slice(0, 2).map((reason, ridx) => (
+                          <span
+                            key={ridx}
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-film-cream/5 text-film-cream/60 border border-film-cream/10"
+                          >
+                            {reason}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="max-w-7xl mx-auto px-6 py-16">
         <div className="flex items-end justify-between mb-10">

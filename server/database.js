@@ -138,6 +138,21 @@ db.exec(`
     FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
     UNIQUE(collection_id, film_id)
   );
+
+  CREATE TABLE IF NOT EXISTS recommendations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    film_id INTEGER NOT NULL,
+    sort_order INTEGER DEFAULT 0,
+    is_manual INTEGER DEFAULT 0,
+    reason TEXT,
+    algorithm_score REAL DEFAULT 0,
+    note TEXT,
+    is_active INTEGER DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
+    UNIQUE(film_id, is_manual)
+  );
 `);
 
 const columns = db.prepare("PRAGMA table_info(screenings)").all();
@@ -427,6 +442,26 @@ if (filmCount === 0) {
   insertCollectionFilm.run(col3, filmIds[5], 3, '塔可夫斯基的精神漫游');
 
   console.log('✅ 示例数据已初始化');
+}
+
+const recColumns = db.prepare("PRAGMA table_info(recommendations)").all();
+if (recColumns.length === 0) {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recommendations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      film_id INTEGER NOT NULL,
+      sort_order INTEGER DEFAULT 0,
+      is_manual INTEGER DEFAULT 0,
+      reason TEXT,
+      algorithm_score REAL DEFAULT 0,
+      note TEXT,
+      is_active INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (film_id) REFERENCES films(id) ON DELETE CASCADE,
+      UNIQUE(film_id, is_manual)
+    );
+  `);
 }
 
 module.exports = db;

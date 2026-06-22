@@ -273,3 +273,15 @@ export const search = {
     return request(`/search${qs ? '?' + qs : ''}`);
   },
 };
+
+export const recommendations = {
+  list: (params = {}) => {
+    const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== null && v !== '')).toString();
+    return request(`/recommendations${qs ? '?' + qs : ''}`);
+  },
+  listManual: () => request('/recommendations/manual'),
+  createManual: (data) => request('/recommendations/manual', { method: 'POST', body: JSON.stringify(data) }),
+  updateManual: (id, data) => request(`/recommendations/manual/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteManual: (id) => request(`/recommendations/manual/${id}`, { method: 'DELETE' }),
+  refresh: () => request('/recommendations/refresh'),
+};

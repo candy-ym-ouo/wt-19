@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
-import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi, venues as venuesApi, draftStore } from '../api.js';
+import { films as filmsApi, screenings as screeningsApi, reviews as reviewsApi, stats as statsApi, notifications as notifApi, favorites as favApi, reports as reportsApi, collections as collectionsApi, venues as venuesApi, draftStore, recommendations as recApi } from '../api.js';
 
 const emptyFilm = {
   title: '', original_title: '', director: '', year: '', country: '',
@@ -44,15 +44,20 @@ export default function Admin() {
   const [showVenueForm, setShowVenueForm] = useState(false);
   const [showCollectionForm, setShowCollectionForm] = useState(false);
   const [showAddFilmToCollection, setShowAddFilmToCollection] = useState(null);
+  const [showRecForm, setShowRecForm] = useState(false);
   const [editingFilm, setEditingFilm] = useState(null);
   const [editingScreening, setEditingScreening] = useState(null);
   const [editingVenue, setEditingVenue] = useState(null);
   const [editingCollection, setEditingCollection] = useState(null);
+  const [editingRec, setEditingRec] = useState(null);
+  const [manualRecList, setManualRecList] = useState([]);
+  const [liveRecPreview, setLiveRecPreview] = useState({ recommendations: [], meta: null });
   const [filmForm, setFilmForm] = useState(emptyFilm);
   const [screeningForm, setScreeningForm] = useState(emptyScreening);
   const [venueForm, setVenueForm] = useState(emptyVenue);
   const [collectionForm, setCollectionForm] = useState(emptyCollection);
   const [addFilmForm, setAddFilmForm] = useState({ film_id: '', sort_order: 0, note: '' });
+  const [recForm, setRecForm] = useState({ film_id: '', sort_order: 0, reason: '', note: '' });
   const [screeningConflictError, setScreeningConflictError] = useState(null);
   const [filmImportResult, setFilmImportResult] = useState(null);
   const [screeningImportResult, setScreeningImportResult] = useState(null);
@@ -60,9 +65,10 @@ export default function Admin() {
 
   const fetchAll = async () => {
     setLoading(true);
-    const [s, f, sc, v, r, n, fav, rp, cols] = await Promise.all([
+    const [s, f, sc, v, r, n, fav, rp, cols, mr, lr] = await Promise.all([
       statsApi.get(), filmsApi.list(), screeningsApi.list(), venuesApi.list(), reviewsApi.list({ include_hidden: 1 }),
-      notifApi.list(), favApi.list(), reportsApi.list(), collectionsApi.list()
+      notifApi.list(), favApi.list(), reportsApi.list(), collectionsApi.list(),
+      recApi.listManual(), recApi.list({ limit: 12 })
     ]);
     setStats(s);
     setFilmList(f);
@@ -73,6 +79,8 @@ export default function Admin() {
     setFavoriteList(fav);
     setReportList(rp);
     setCollectionList(cols);
+    setManualRecList(mr);
+    setLiveRecPreview(lr);
     loadDrafts();
     setLoading(false);
   };
@@ -503,6 +511,79 @@ export default function Admin() {
     }
   };
 
+  const openNewRec = () => {
+    setEditingRec(null);
+    setRecForm({ film_id: '', sort_order: manualRecList.length + 1, reason: '', note: '' });
+    setShowRecForm(true);
+  };
+
+  const openEditRec = (rec) => {
+    setEditingRec(rec);
+    setRecForm({
+      film_id: String(rec.film_id),
+      sort_order: rec.sort_order || 0,
+      reason: rec.reason || '',
+      note: rec.note || '',
+    });
+    setShowRecForm(true);
+  };
+
+  const handleRecSubmit = async (e) => {
+    e.preventDefault();
+    if (!recForm.film_id) {
+      alert('请选择影片');
+      return;
+    }
+    try {
+      const data = {
+        film_id: parseInt(recForm.film_id),
+        sort_order: parseInt(recForm.sort_order) || 0,
+        reason: recForm.reason || null,
+        note: recForm.note || null,
+      };
+      if (editingRec) {
+        await recApi.updateManual(editingRec.id, data);
+      } else {
+        await recApi.createManual(data);
+      }
+      setShowRecForm(false);
+      setEditingRec(null);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleDeleteRec = async (id) => {
+    if (!confirm('确定移除此人工推荐？')) return;
+    try {
+      await recApi.deleteManual(id);
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleToggleRecActive = async (rec) => {
+    try {
+      await recApi.updateManual(rec.id, { is_active: rec.is_active ? 0 : 1 });
+      fetchAll();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleRefreshRec = async () => {
+    if (!confirm('确定重新生成算法推荐？人工推荐不受影响。')) return;
+    try {
+      await recApi.refresh();
+      fetchAll();
+      alert('推荐已刷新');
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const handleFilmImport = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -557,6 +638,7 @@ export default function Admin() {
 
   const tabs = [
     { key: 'overview', label: '总览', icon: '📊' },
+    { key: 'recommendations', label: '推荐管理', icon: '✨' },
     { key: 'collections', label: '专题策展', icon: '📚' },
     { key: 'films', label: '影片管理', icon: '🎬' },
     { key: 'venues', label: '场馆管理', icon: '🏛' },
@@ -686,6 +768,179 @@ export default function Admin() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'recommendations' && (
+        <div>
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-film-dark/50 rounded-xl border border-film-gray/50 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">✨ 人工推荐（编辑精选）</h3>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleRefreshRec}
+                    className="px-3 py-1.5 bg-purple-500/15 text-purple-300 border border-purple-500/30 rounded-lg hover:bg-purple-500/25 transition-colors text-sm"
+                  >
+                    🔄 刷新算法
+                  </button>
+                  <button
+                    onClick={openNewRec}
+                    className="px-4 py-1.5 bg-film-gold text-film-black font-medium rounded-lg hover:bg-film-gold/90 transition-colors text-sm"
+                  >
+                    + 添加推荐
+                  </button>
+                </div>
+              </div>
+              <p className="text-sm text-film-cream/50 mb-4">
+                人工添加的推荐会优先展示在首页「为你推荐」区域，按排序值升序排列
+              </p>
+              {manualRecList.length === 0 ? (
+                <div className="py-10 text-center text-film-cream/50 border border-dashed border-film-gray rounded-xl">
+                  <div className="text-3xl mb-2">⭐</div>
+                  暂无人工推荐，点击右上角添加
+                </div>
+              ) : (
+                <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
+                  {manualRecList.map(rec => (
+                    <div
+                      key={rec.id}
+                      className={`flex items-start gap-3 p-3 rounded-lg border transition-colors ${
+                        rec.is_active
+                          ? 'bg-film-black/40 border-film-gray/50 hover:border-film-gold/40'
+                          : 'bg-film-black/20 border-film-gray/20 opacity-60'
+                      }`}
+                    >
+                      <div className="w-10 h-14 bg-film-gray rounded overflow-hidden flex-shrink-0">
+                        {rec.poster && <img src={rec.poster} alt="" className="w-full h-full object-cover" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Link to={`/films/${rec.film_id}`} className="font-medium text-film-cream hover:text-film-gold truncate">
+                            {rec.title}
+                          </Link>
+                          <span className="text-xs bg-film-gold/15 text-film-gold px-2 py-0.5 rounded-full">⭐ 编辑</span>
+                          {!rec.is_active && <span className="text-xs bg-film-cream/10 text-film-cream/60 px-2 py-0.5 rounded-full">已下架</span>}
+                          <span className="text-xs text-film-cream/40">排序: {rec.sort_order}</span>
+                        </div>
+                        {rec.reason && <p className="text-xs text-film-gold/80 mt-1">📌 {rec.reason}</p>}
+                        {rec.note && <p className="text-xs text-film-cream/40 mt-1 truncate">备注: {rec.note}</p>}
+                      </div>
+                      <div className="flex gap-1 flex-shrink-0">
+                        <button
+                          onClick={() => handleToggleRecActive(rec)}
+                          className={`text-xs px-2 py-1 rounded transition-colors ${
+                            rec.is_active
+                              ? 'text-film-orange hover:bg-film-orange/10'
+                              : 'text-green-400 hover:bg-green-400/10'
+                          }`}
+                          title={rec.is_active ? '下架' : '上架'}
+                        >
+                          {rec.is_active ? '下架' : '上架'}
+                        </button>
+                        <button
+                          onClick={() => openEditRec(rec)}
+                          className="text-xs text-film-cream/60 hover:text-film-gold px-2 py-1 rounded hover:bg-film-gray/50 transition-colors"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          onClick={() => handleDeleteRec(rec.id)}
+                          className="text-xs text-film-cream/60 hover:text-film-red px-2 py-1 rounded hover:bg-film-red/10 transition-colors"
+                        >
+                          删除
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="bg-film-dark/50 rounded-xl border border-film-gray/50 p-6">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold">🎯 实时推荐预览</h3>
+                <div className="text-xs text-film-cream/50">
+                  {liveRecPreview.meta && (
+                    <>人工 {liveRecPreview.meta.manual_count} · 算法 {liveRecPreview.meta.algorithm_count}</>
+                  )}
+                </div>
+              </div>
+              <p className="text-sm text-film-cream/50 mb-4">
+                首页「为你推荐」区域的实时展示效果，包含人工推荐和算法推荐的合并结果
+              </p>
+              {!liveRecPreview.recommendations || liveRecPreview.recommendations.length === 0 ? (
+                <div className="py-10 text-center text-film-cream/50 border border-dashed border-film-gray rounded-xl">
+                  <div className="text-3xl mb-2">🤖</div>
+                  暂无推荐
+                </div>
+              ) : (
+                <div className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
+                  {liveRecPreview.recommendations.map((rec, idx) => (
+                    <div
+                      key={`preview-${rec.film_id}-${idx}`}
+                      className="flex items-center gap-3 p-2.5 rounded-lg bg-film-black/30 hover:bg-film-black/50 transition-colors"
+                    >
+                      <div className="text-xs font-mono text-film-cream/40 w-6 text-center">
+                        {String(idx + 1).padStart(2, '0')}
+                      </div>
+                      <div className="w-8 h-11 bg-film-gray rounded overflow-hidden flex-shrink-0">
+                        {rec.poster && <img src={rec.poster} alt="" className="w-full h-full object-cover" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium truncate">{rec.title}</span>
+                          {rec.is_manual ? (
+                            <span className="text-[10px] bg-film-gold/15 text-film-gold px-1.5 py-0.5 rounded">⭐编辑</span>
+                          ) : (
+                            <span className="text-[10px] bg-purple-500/15 text-purple-300 px-1.5 py-0.5 rounded">🤖算法</span>
+                          )}
+                        </div>
+                        {rec.match_reasons && rec.match_reasons.length > 0 && (
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {rec.match_reasons.slice(0, 2).map((r, i) => (
+                              <span key={i} className="text-[10px] text-film-cream/50 bg-film-cream/5 px-1 py-0.5 rounded">
+                                {r}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {rec.algorithm_score > 0 && (
+                        <span className="text-[10px] text-film-cream/40 font-mono">
+                          {rec.algorithm_score.toFixed(0)}
+                        </span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-film-dark/30 rounded-xl border border-film-gray/30 p-5">
+            <h4 className="font-semibold mb-3 flex items-center gap-2">
+              <span>💡</span> 推荐算法说明
+            </h4>
+            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm text-film-cream/70">
+              <div className="p-3 bg-film-black/30 rounded-lg">
+                <div className="text-film-gold font-medium mb-1">🎯 收藏权重（30+）</div>
+                <div className="text-xs text-film-cream/50">已收藏+30，已购票+15，已观看+10，开启提醒+5</div>
+              </div>
+              <div className="p-3 bg-film-black/30 rounded-lg">
+                <div className="text-film-gold font-medium mb-1">⭐ 评分权重（×3）</div>
+                <div className="text-xs text-film-cream/50">影片评分 × 3，8.5分以上标记「高分佳作」</div>
+              </div>
+              <div className="p-3 bg-film-black/30 rounded-lg">
+                <div className="text-film-gold font-medium mb-1">✍️ 短评心情（动态）</div>
+                <div className="text-xs text-film-cream/50">短评平均评分×4，心情标签计分，近期短评+8/条</div>
+              </div>
+              <div className="p-3 bg-film-black/30 rounded-lg">
+                <div className="text-film-gold font-medium mb-1">📅 放映信息（6~27）</div>
+                <div className="text-xs text-film-cream/50">即将放映+12/场，7天内+15，30天内+6/场</div>
+              </div>
             </div>
           </div>
         </div>
@@ -2294,6 +2549,93 @@ export default function Admin() {
                   className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
                 >
                   添加
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showRecForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setShowRecForm(false)}>
+          <div className="bg-film-dark w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-2xl border border-film-gray" onClick={e => e.stopPropagation()}>
+            <div className="sticky top-0 bg-film-dark border-b border-film-gray/50 p-5 flex items-center justify-between">
+              <h2 className="text-xl font-serif font-bold">{editingRec ? '编辑人工推荐' : '添加人工推荐'}</h2>
+              <button
+                onClick={() => setShowRecForm(false)}
+                className="p-2 rounded-lg hover:bg-film-gray transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <form onSubmit={handleRecSubmit} className="p-5 space-y-4">
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">选择影片 *</label>
+                <select
+                  value={recForm.film_id}
+                  onChange={(e) => setRecForm({ ...recForm, film_id: e.target.value })}
+                  disabled={!!editingRec}
+                  className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none disabled:opacity-50"
+                >
+                  <option value="">请选择影片</option>
+                  {filmList
+                    .filter(f => editingRec || !manualRecList.some(r => String(r.film_id) === String(f.id)))
+                    .map(f => (
+                    <option key={f.id} value={f.id}>{f.title} ({f.year || '未知年份'}) - {f.director || '未知导演'}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs text-film-cream/60 mb-1.5 block">排序权重（越小越靠前）</label>
+                  <input
+                    type="number"
+                    value={recForm.sort_order}
+                    onChange={(e) => setRecForm({ ...recForm, sort_order: e.target.value })}
+                    className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                  />
+                </div>
+                <div className="flex items-end">
+                  <div className="text-xs text-film-cream/40">
+                    人工推荐将始终排在算法推荐之前
+                  </div>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">推荐理由（展示给用户）</label>
+                <input
+                  type="text"
+                  value={recForm.reason}
+                  onChange={(e) => setRecForm({ ...recForm, reason: e.target.value })}
+                  placeholder="如 本周编辑力荐、经典修复、影迷必看等"
+                  className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-film-cream/60 mb-1.5 block">内部备注（不展示）</label>
+                <textarea
+                  value={recForm.note}
+                  onChange={(e) => setRecForm({ ...recForm, note: e.target.value })}
+                  rows={2}
+                  placeholder="如 活动合作、重点推片、截止日期等"
+                  className="w-full px-3 py-2.5 bg-film-black border border-film-gray rounded-lg focus:border-film-gold focus:outline-none resize-none"
+                />
+              </div>
+              <div className="flex justify-end gap-3 pt-4 border-t border-film-gray/50">
+                <button
+                  type="button"
+                  onClick={() => setShowRecForm(false)}
+                  className="px-5 py-2.5 rounded-lg text-film-cream/60 hover:text-film-cream transition-colors"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  className="px-6 py-2.5 rounded-lg bg-film-gold text-film-black font-medium hover:bg-film-gold/90 transition-colors"
+                >
+                  {editingRec ? '保存修改' : '添加推荐'}
                 </button>
               </div>
             </form>
