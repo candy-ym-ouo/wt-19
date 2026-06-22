@@ -2235,14 +2235,21 @@ app.get('/api/recommendations', (req, res) => {
     ORDER BY r.sort_order ASC, r.created_at DESC
   `).all();
 
+  const storedAlgoRecs = db.prepare(`
+    SELECT r.*, f.title, f.original_title, f.director, f.year, f.country, f.genre,
+           f.duration, f.language, f.synopsis, f.poster, f.rating
+    FROM recommendations r
+    LEFT JOIN films f ON r.film_id = f.id
+    WHERE r.is_manual = 0 AND r.is_active = 1
+    ORDER BY r.sort_order ASC, r.algorithm_score DESC
+  `).all();
+
   const manualFilmIds = new Set(manualRecs.map(r => r.film_id));
-  const algoRecs = generateAlgorithmRecommendations(limitNum * 2)
-    .filter(r => !manualFilmIds.has(r.id));
+  const validStoredAlgoRecs = storedAlgoRecs.filter(r => !manualFilmIds.has(r.film_id));
 
-  const merged = [];
-
-  manualRecs.forEach(r => {
-    merged.push({
+  let algoRecs;
+  if (validStoredAlgoRecs.length > 0) {
+    algoRecs = validStoredAlgoRecs.map(r => ({
       id: r.id,
       film_id: r.film_id,
       title: r.title,
@@ -2257,39 +2264,73 @@ app.get('/api/recommendations', (req, res) => {
       poster: r.poster,
       rating: r.rating,
       sort_order: r.sort_order,
-      is_manual: true,
-      reason: r.reason || '编辑推荐',
-      match_reasons: r.reason ? [r.reason] : ['编辑推荐'],
-      note: r.note,
+      is_manual: false,
+      reason: null,
+      match_reasons: r.reason ? r.reason.split('、').filter(Boolean) : [],
+      note: null,
       algorithm_score: r.algorithm_score || 0,
-    });
-  });
+    }));
+  } else {
+    const fallbackAlgo = generateAlgorithmRecommendations(limitNum * 2)
+      .filter(r => !manualFilmIds.has(r.id));
+    algoRecs = fallbackAlgo.map((r, idx) => ({
+      id: null,
+      film_id: r.id,
+      title: r.title,
+      original_title: r.original_title,
+      director: r.director,
+      year: r.year,
+      country: r.country,
+      genre: r.genre,
+      duration: r.duration,
+      language: r.language,
+      synopsis: r.synopsis,
+      poster: r.poster,
+      rating: r.rating,
+      sort_order: idx,
+      is_manual: false,
+      reason: null,
+      match_reasons: r.match_reasons,
+      note: null,
+      algorithm_score: r.algorithm_score,
+    }));
+  }
 
-  merged.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  const merged = [];
+
+  const formattedManual = manualRecs.map(r => ({
+    id: r.film_id,
+    rec_id: r.id,
+    film_id: r.film_id,
+    title: r.title,
+    original_title: r.original_title,
+    director: r.director,
+    year: r.year,
+    country: r.country,
+    genre: r.genre,
+    duration: r.duration,
+    language: r.language,
+    synopsis: r.synopsis,
+    poster: r.poster,
+    rating: r.rating,
+    sort_order: r.sort_order,
+    is_manual: true,
+    reason: r.reason || '编辑推荐',
+    match_reasons: r.reason ? [r.reason] : ['编辑推荐'],
+    note: r.note,
+    algorithm_score: r.algorithm_score || 0,
+  }));
+  formattedManual.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+  formattedManual.forEach(r => merged.push(r));
 
   const remainingSlots = limitNum - merged.length;
-  if (remainingSlots > 0) {
-    algoRecs.slice(0, remainingSlots).forEach(r => {
+  if (remainingSlots > 0 && algoRecs.length > 0) {
+    algoRecs.slice(0, remainingSlots).forEach((r, idx) => {
       merged.push({
-        id: null,
-        film_id: r.id,
-        title: r.title,
-        original_title: r.original_title,
-        director: r.director,
-        year: r.year,
-        country: r.country,
-        genre: r.genre,
-        duration: r.duration,
-        language: r.language,
-        synopsis: r.synopsis,
-        poster: r.poster,
-        rating: r.rating,
-        sort_order: 9999,
-        is_manual: false,
-        reason: null,
-        match_reasons: r.match_reasons,
-        note: null,
-        algorithm_score: r.algorithm_score,
+        ...r,
+        id: r.film_id,
+        rec_id: r.id,
+        sort_order: 10000 + (r.sort_order !== undefined ? r.sort_order : idx),
       });
     });
   }
@@ -2300,6 +2341,7 @@ app.get('/api/recommendations', (req, res) => {
       total: merged.length,
       manual_count: manualRecs.length,
       algorithm_count: merged.filter(r => !r.is_manual).length,
+      source: storedAlgoRecs.length > 0 ? 'stored' : 'generated',
     },
   });
 });
